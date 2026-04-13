@@ -16,12 +16,14 @@ async def init_db():
     global db
     db = await asyncpg.create_pool(DATABASE_URL)
 
-# ================= REGISTER BOT =================
+# ================= HANDLER =================
 def register(dp, tenant_id, bot):
 
     @dp.message()
-    async def all_handler(msg: types.Message):
-        text = msg.text or ""
+    async def handler(msg: types.Message):
+        print("MESSAGE:", msg.text)  # DEBUG
+
+        text = (msg.text or "").strip().lower()
 
         # ===== START =====
         if text.startswith("/start"):
@@ -35,14 +37,14 @@ def register(dp, tenant_id, bot):
             return
 
         # ===== BUY =====
-        if text.lower() == "buy":
+        if text == "buy":
             user = await db.fetchrow("""
                 SELECT id FROM users 
                 WHERE telegram_id=$1 AND tenant_id=$2
             """, msg.from_user.id, tenant_id)
 
             if not user:
-                await msg.answer("❌ Please /start first")
+                await msg.answer("❌ Please send /start first")
                 return
 
             order = await db.fetchrow("""
@@ -64,7 +66,7 @@ def register(dp, tenant_id, bot):
             return
 
         # ===== DEFAULT =====
-        await msg.answer("❓ Gõ /start hoặc 'buy'")
+        await msg.answer("👉 Gõ /start hoặc 'buy'")
 
 # ================= STARTUP =================
 @app.on_event("startup")
@@ -74,6 +76,8 @@ async def startup():
     rows = await db.fetch("SELECT * FROM tenants")
 
     for r in rows:
+        print("LOAD BOT:", r["bot_token"])
+
         bot = Bot(token=r["bot_token"])
         dp = Dispatcher()
 
@@ -86,11 +90,14 @@ async def startup():
 @app.post("/{token}")
 async def webhook(token: str, request: Request):
     if token not in bots:
+        print("❌ TOKEN NOT FOUND:", token)
         return {"ok": False}
 
     data = await request.json()
+    print("UPDATE:", data)  # DEBUG
 
     update = types.Update(**data)
+
     await dispatchers[token].process_update(update)
 
     return {"ok": True}
