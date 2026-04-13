@@ -1,7 +1,4 @@
-
 fastapi
 uvicorn
 asyncpg
 aiogram
-bcrypt
-pyjwt
