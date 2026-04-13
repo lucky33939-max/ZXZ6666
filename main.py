@@ -19,25 +19,20 @@ async def init_db():
 
 # ================= MENU =================
 def main_menu():
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+    return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👑 Numbers", callback_data="numbers")],
-        [InlineKeyboardButton(text="🔥 Rent 888 (HOT)", callback_data="rent888")],
-        [
-            InlineKeyboardButton(text="💎 Premium", callback_data="premium"),
-            InlineKeyboardButton(text="🎁 Gifts", callback_data="gifts")
-        ]
+        [InlineKeyboardButton(text="🔥 Rent 888", callback_data="rent")],
+        [InlineKeyboardButton(text="💎 Premium", callback_data="premium")]
     ])
-    return kb
 
 # ================= REGISTER =================
 def register(dp, tenant_id, bot):
 
-    # ===== START =====
     @dp.message()
-    async def handle_msg(msg: types.Message):
-        print("MSG:", msg.text)
+    async def msg_handler(msg: types.Message):
+        print("📩 MSG:", msg.text)
 
-        text = (msg.text or "").lower()
+        text = (msg.text or "").strip().lower()
 
         if text.startswith("/start"):
             await db.execute("""
@@ -49,66 +44,37 @@ def register(dp, tenant_id, bot):
             await msg.answer("🚀 Welcome", reply_markup=main_menu())
             return
 
-        if text == "buy":
-            await msg.answer("👉 Chọn sản phẩm trong menu")
-            return
+        await msg.answer("👉 Gõ /start")
 
-    # ===== CALLBACK =====
     @dp.callback_query()
-    async def handle_callback(call: types.CallbackQuery):
-        print("CALL:", call.data)
+    async def cb_handler(call: types.CallbackQuery):
+        print("🔘 CLICK:", call.data)
 
-        # ===== NUMBERS =====
         if call.data == "numbers":
-            text = """
-👑 SIM LIST
+            await call.message.edit_text(
+                "👑 SIM LIST\n+44 = 70U\n+1 = 75U",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🛒 Buy", callback_data="buy")]
+                ])
+            )
 
-+44 → 70U  
-+1 tứ quý → 75U  
-Thường → 60U
-"""
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🛒 Buy", callback_data="buy_sim")]
-            ])
-            await call.message.edit_text(text, reply_markup=kb)
+        elif call.data == "rent":
+            await call.message.edit_text(
+                "🔥 888 thuê\n1 tháng = 99U\n3 tháng = 268U",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔥 Thuê ngay", callback_data="buy")]
+                ])
+            )
 
-        # ===== 888 =====
-        elif call.data == "rent888":
-            text = """
-🔥 888 VIP
-
-1 tháng = 99U  
-3 tháng = 268U  
-
-+888 0469 5721  
-+888 0743 9525  
-"""
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔥 Thuê ngay", callback_data="buy_888")]
-            ])
-            await call.message.edit_text(text, reply_markup=kb)
-
-        # ===== PREMIUM =====
         elif call.data == "premium":
-            text = """
-💎 PREMIUM
+            await call.message.edit_text(
+                "💎 Premium\n3 tháng = 15U\n6 tháng = 20U\n1 năm = 36U",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✅ Buy", callback_data="buy")]
+                ])
+            )
 
-3 tháng = 15U  
-6 tháng = 20U  
-1 năm = 36U
-"""
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Buy", callback_data="buy_pre")]
-            ])
-            await call.message.edit_text(text, reply_markup=kb)
-
-        # ===== GIFT =====
-        elif call.data == "gifts":
-            await call.message.edit_text("🎁 Gifts từ 10U → 2000U")
-
-        # ===== ORDER =====
-        elif call.data.startswith("buy_"):
-
+        elif call.data == "buy":
             user = await db.fetchrow("""
                 SELECT id FROM users 
                 WHERE telegram_id=$1 AND tenant_id=$2
@@ -128,7 +94,6 @@ Thường → 60U
                 "SELECT * FROM tenants WHERE id=$1", tenant_id
             )
 
-            # gửi admin
             await bot.send_message(
                 tenant["admin_id"],
                 f"📥 Order #{order['id']} từ {call.from_user.id}"
@@ -143,27 +108,39 @@ async def startup():
 
     rows = await db.fetch("SELECT * FROM tenants")
 
-    for r in rows:
-        print("LOAD BOT:", r["bot_token"])
+    print("🔥 TENANTS:", rows)
 
-        bot = Bot(token=r["bot_token"])
+    for r in rows:
+        token = (r["bot_token"] or "").strip()
+
+        print("✅ LOAD BOT:", token)
+
+        if not token:
+            continue
+
+        bot = Bot(token=token)
         dp = Dispatcher()
 
         register(dp, r["id"], bot)
 
-        bots[r["bot_token"]] = bot
-        dispatchers[r["bot_token"]] = dp
+        bots[token] = bot
+        dispatchers[token] = dp
+
+    print("🚀 TOTAL BOTS:", len(bots))
 
 # ================= WEBHOOK =================
 @app.post("/{token}")
 async def webhook(token: str, request: Request):
-    print("🔥 WEBHOOK HIT")
+    token = token.strip()
+
+    print("🔥 WEBHOOK HIT:", token)
 
     data = await request.json()
-    print("DATA:", data)
+    print("📦 DATA:", data)
 
     if token not in bots:
-        print("❌ TOKEN NOT FOUND")
+        print("❌ TOKEN NOT FOUND:", token)
+        print("📌 AVAILABLE:", list(bots.keys()))
         return {"ok": False}
 
     bot = bots[token]
@@ -171,7 +148,6 @@ async def webhook(token: str, request: Request):
 
     update = types.Update(**data)
 
-    # 🔥 FIX QUAN TRỌNG
     await dp.feed_update(bot, update)
 
     return {"ok": True}
