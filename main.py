@@ -90,14 +90,18 @@ async def startup():
 @app.post("/{token}")
 async def webhook(token: str, request: Request):
     if token not in bots:
-        print("❌ TOKEN NOT FOUND:", token)
+        print("❌ TOKEN NOT FOUND")
         return {"ok": False}
 
     data = await request.json()
-    print("UPDATE:", data)  # DEBUG
+    print("🔥 WEBHOOK HIT:", data)
+
+    bot = bots[token]
+    dp = dispatchers[token]
 
     update = types.Update(**data)
 
-    await dispatchers[token].process_update(update)
+    # 🔥 DÒNG QUAN TRỌNG (FIX BOT KHÔNG REPLY)
+    await dp.feed_update(bot, update)
 
     return {"ok": True}
