@@ -2,6 +2,7 @@ import os
 import asyncpg
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -16,16 +17,28 @@ async def init_db():
     global db
     db = await asyncpg.create_pool(DATABASE_URL)
 
-# ================= HANDLER =================
+# ================= MENU =================
+def main_menu():
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👑 Numbers", callback_data="numbers")],
+        [InlineKeyboardButton(text="🔥 Rent 888 (HOT)", callback_data="rent888")],
+        [
+            InlineKeyboardButton(text="💎 Premium", callback_data="premium"),
+            InlineKeyboardButton(text="🎁 Gifts", callback_data="gifts")
+        ]
+    ])
+    return kb
+
+# ================= REGISTER =================
 def register(dp, tenant_id, bot):
 
+    # ===== START =====
     @dp.message()
-    async def handler(msg: types.Message):
-        print("MESSAGE:", msg.text)  # DEBUG
+    async def handle_msg(msg: types.Message):
+        print("MSG:", msg.text)
 
-        text = (msg.text or "").strip().lower()
+        text = (msg.text or "").lower()
 
-        # ===== START =====
         if text.startswith("/start"):
             await db.execute("""
                 INSERT INTO users (tenant_id, telegram_id)
@@ -33,18 +46,76 @@ def register(dp, tenant_id, bot):
                 ON CONFLICT DO NOTHING
             """, tenant_id, msg.from_user.id)
 
-            await msg.answer("🚀 Welcome")
+            await msg.answer("🚀 Welcome", reply_markup=main_menu())
             return
 
-        # ===== BUY =====
         if text == "buy":
+            await msg.answer("👉 Chọn sản phẩm trong menu")
+            return
+
+    # ===== CALLBACK =====
+    @dp.callback_query()
+    async def handle_callback(call: types.CallbackQuery):
+        print("CALL:", call.data)
+
+        # ===== NUMBERS =====
+        if call.data == "numbers":
+            text = """
+👑 SIM LIST
+
++44 → 70U  
++1 tứ quý → 75U  
+Thường → 60U
+"""
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🛒 Buy", callback_data="buy_sim")]
+            ])
+            await call.message.edit_text(text, reply_markup=kb)
+
+        # ===== 888 =====
+        elif call.data == "rent888":
+            text = """
+🔥 888 VIP
+
+1 tháng = 99U  
+3 tháng = 268U  
+
++888 0469 5721  
++888 0743 9525  
+"""
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔥 Thuê ngay", callback_data="buy_888")]
+            ])
+            await call.message.edit_text(text, reply_markup=kb)
+
+        # ===== PREMIUM =====
+        elif call.data == "premium":
+            text = """
+💎 PREMIUM
+
+3 tháng = 15U  
+6 tháng = 20U  
+1 năm = 36U
+"""
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Buy", callback_data="buy_pre")]
+            ])
+            await call.message.edit_text(text, reply_markup=kb)
+
+        # ===== GIFT =====
+        elif call.data == "gifts":
+            await call.message.edit_text("🎁 Gifts từ 10U → 2000U")
+
+        # ===== ORDER =====
+        elif call.data.startswith("buy_"):
+
             user = await db.fetchrow("""
                 SELECT id FROM users 
                 WHERE telegram_id=$1 AND tenant_id=$2
-            """, msg.from_user.id, tenant_id)
+            """, call.from_user.id, tenant_id)
 
             if not user:
-                await msg.answer("❌ Please send /start first")
+                await call.message.answer("❌ /start trước")
                 return
 
             order = await db.fetchrow("""
@@ -57,16 +128,13 @@ def register(dp, tenant_id, bot):
                 "SELECT * FROM tenants WHERE id=$1", tenant_id
             )
 
+            # gửi admin
             await bot.send_message(
                 tenant["admin_id"],
-                f"📥 Order #{order['id']} từ {msg.from_user.id}"
+                f"📥 Order #{order['id']} từ {call.from_user.id}"
             )
 
-            await msg.answer(f"⏳ Order #{order['id']} created")
-            return
-
-        # ===== DEFAULT =====
-        await msg.answer("👉 Gõ /start hoặc 'buy'")
+            await call.message.answer(f"⏳ Order #{order['id']} created")
 
 # ================= STARTUP =================
 @app.on_event("startup")
@@ -89,19 +157,21 @@ async def startup():
 # ================= WEBHOOK =================
 @app.post("/{token}")
 async def webhook(token: str, request: Request):
+    print("🔥 WEBHOOK HIT")
+
+    data = await request.json()
+    print("DATA:", data)
+
     if token not in bots:
         print("❌ TOKEN NOT FOUND")
         return {"ok": False}
-
-    data = await request.json()
-    print("🔥 WEBHOOK HIT:", data)
 
     bot = bots[token]
     dp = dispatchers[token]
 
     update = types.Update(**data)
 
-    # 🔥 DÒNG QUAN TRỌNG (FIX BOT KHÔNG REPLY)
+    # 🔥 FIX QUAN TRỌNG
     await dp.feed_update(bot, update)
 
     return {"ok": True}
