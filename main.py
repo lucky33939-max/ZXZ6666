@@ -1,226 +1,210 @@
 import os
+import asyncio
+import logging
 import random
 import asyncpg
-import logging
 
 from fastapi import FastAPI, Request
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, Update
-)
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import Bot, Dispatcher, types, Router
+from aiogram.enums import ParseMode
 
 # ===== CONFIG =====
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI()
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
+router = Router()
+dp.include_router(router)
 
-bots = {}
-dispatchers = {}
+app = FastAPI()
 db = None
-user_state = {}
 
 # ================= DB =================
 async def init_db():
     global db
-    db = await asyncpg.create_pool(DATABASE_URL)
+    while True:
+        try:
+            db = await asyncpg.create_pool(DATABASE_URL)
+
+            await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                telegram_id BIGINT UNIQUE,
+                balance FLOAT DEFAULT 0
+            );
+            """)
+
+            await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                product TEXT,
+                price FLOAT,
+                status TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            """)
+
+            print("✅ DB READY")
+            break
+        except Exception as e:
+            print("❌ DB ERROR:", e)
+            await asyncio.sleep(2)
 
 # ================= MENU =================
 def main_menu():
-    return ReplyKeyboardMarkup(
+    return types.ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="💎 Premium"), KeyboardButton(text="⭐ Stars")],
-            [KeyboardButton(text="👑 Numbers"), KeyboardButton(text="🔥 Rent 888")],
-            [KeyboardButton(text="💰 Topup"), KeyboardButton(text="👤 Profile")],
-            [KeyboardButton(text="👨‍💻 Support")]
+            [types.KeyboardButton(text="💎 开通会员"), types.KeyboardButton(text="✨ 购买星星")],
+            [types.KeyboardButton(text="👑 靓号市场"), types.KeyboardButton(text="🔥 888靓号")],
+            [types.KeyboardButton(text="💰 余额充值"), types.KeyboardButton(text="👤 个人中心")],
+            [types.KeyboardButton(text="👨‍💻 客服")]
         ],
         resize_keyboard=True
     )
 
-def stars_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="50⭐ / 1$", callback_data="star_50"),
-            InlineKeyboardButton(text="100⭐ / 2$", callback_data="star_100")
-        ],
-        [
-            InlineKeyboardButton(text="200⭐", callback_data="star_200"),
-            InlineKeyboardButton(text="300⭐", callback_data="star_300")
-        ],
-        [
-            InlineKeyboardButton(text="500⭐", callback_data="star_500"),
-            InlineKeyboardButton(text="1000⭐", callback_data="star_1000")
-        ]
+# ================= USER =================
+async def get_or_create_user(user_id):
+    user = await db.fetchrow("SELECT * FROM users WHERE telegram_id=$1", user_id)
+    if not user:
+        await db.execute("INSERT INTO users(telegram_id) VALUES($1)", user_id)
+    return user
+
+# ================= START =================
+@router.message(lambda msg: msg.text == "/start")
+async def start(msg: types.Message):
+    await get_or_create_user(msg.from_user.id)
+
+    await msg.answer("""
+<b>🚀 欢迎使用系统</b>
+
+⚡ 高效 · 稳定 · 自动化
+""", reply_markup=main_menu())
+
+# ================= STARS =================
+@router.message(lambda msg: msg.text == "✨ 购买星星")
+async def stars(msg: types.Message):
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="50⭐ / 1$", callback_data="star_50"),
+         types.InlineKeyboardButton(text="100⭐ / 2$", callback_data="star_100")],
+        [types.InlineKeyboardButton(text="200⭐ / 3$", callback_data="star_200"),
+         types.InlineKeyboardButton(text="500⭐ / 6$", callback_data="star_500")]
     ])
+    await msg.answer("✨ <b>请选择套餐</b>", reply_markup=kb)
 
-# ================= FOMO =================
-def fomo():
-    return random.randint(10, 80), random.randint(5, 30)
+# ================= VIP =================
+@router.message(lambda msg: msg.text == "💎 开通会员")
+async def vip(msg: types.Message):
+    await msg.answer("""
+💎 <b>会员套餐</b>
 
-# ================= REGISTER =================
-def register(dp, tenant_id, bot):
-
-    # ===== MESSAGE =====
-    @dp.message()
-    async def handle_all(msg: types.Message):
-        print("📩 RECEIVED:", msg.text)
-
-        text = (msg.text or "").lower()
-
-        # START
-        if text.startswith("/start"):
-            await msg.answer("🚀 Bot Ready", reply_markup=main_menu())
-            return
-
-        # STARS
-        if msg.text == "⭐ Stars":
-            await msg.answer("✨ Chọn gói Stars:", reply_markup=stars_menu())
-            return
-
-        # PREMIUM
-        if msg.text == "💎 Premium":
-            await msg.answer("""
-💎 PREMIUM
-
-3 tháng = 15U  
-6 tháng = 20U  
-1 năm = 36U
+3个月 = 15U  
+6个月 = 20U  
+1年 = 36U  
 """)
-            return
 
-        # NUMBERS
-        if msg.text == "👑 Numbers":
-            buyers, view = fomo()
-            await msg.answer(f"""
-👑 VIP NUMBERS
+# ================= NUMBERS =================
+@router.message(lambda msg: msg.text == "👑 靓号市场")
+async def numbers(msg: types.Message):
+    view = random.randint(50, 200)
+    sold = random.randint(100, 500)
 
-+44 → 70U  
-+1 → 75U  
+    await msg.answer(f"""
+👑 <b>靓号市场</b>
 
-🔥 {view} đang xem
-👥 {buyers} đã mua hôm nay
+🇬🇧 +44 → 70U  
+🇺🇸 +1 → 75U  
+
+🔥 在线: {view}
+💰 成交: {sold}
 """)
-            return
 
-        # 888
-        if msg.text == "🔥 Rent 888":
-            await msg.answer("""
-🔥 888 VIP
+# ================= 888 =================
+@router.message(lambda msg: msg.text == "🔥 888靓号")
+async def rent(msg: types.Message):
+    await msg.answer("""
+🔥 <b>888靓号</b>
 
-1 tháng = 99U  
-3 tháng = 268U
+1个月 = 99U  
+3个月 = 268U  
+
+⚠️ 数量有限
 """)
-            return
 
-        # PROFILE
-        if msg.text == "👤 Profile":
-            await msg.answer(f"""
-👤 Profile
+# ================= PROFILE =================
+@router.message(lambda msg: msg.text == "👤 个人中心")
+async def profile(msg: types.Message):
+    user = await db.fetchrow("SELECT * FROM users WHERE telegram_id=$1", msg.from_user.id)
+
+    await msg.answer(f"""
+👤 <b>个人中心</b>
 
 ID: {msg.from_user.id}
-Balance: 0.00
+余额: {user['balance']} USDT
+状态: 正常
 """)
-            return
 
-        # TOPUP
-        if msg.text == "💰 Topup":
-            await msg.answer("""
-💰 Nạp tiền
+# ================= TOPUP =================
+@router.message(lambda msg: msg.text == "💰 余额充值")
+async def topup(msg: types.Message):
+    await msg.answer("""
+💰 <b>充值</b>
 
 10U | 50U | 100U  
-200U | 500U | 1000U
-""")
-            return
-
-        # SUPPORT
-        if msg.text == "👨‍💻 Support":
-            await msg.answer("📩 Contact admin: @yourusername")
-            return
-
-        # ===== INPUT USERNAME =====
-        if msg.from_user.id in user_state:
-            package = user_state[msg.from_user.id]
-            username = msg.text
-
-            buyers, _ = fomo()
-
-            await msg.answer(f"""
-╔════════════════════╗
-        🧾 INVOICE
-╚════════════════════╝
-
-👤 User: {username}
-📦 Gói: {package}
-
-👥 {buyers} người đã mua hôm nay
-
-━━━━━━━━━━━━━━━━━━
-💳 TRC20:
-TXYZ-XXXX
-
-⏳ Status: PENDING
+200U | 500U
 """)
 
-            del user_state[msg.from_user.id]
+# ================= ORDER =================
+async def create_order(user_id, product, price):
+    row = await db.fetchrow("""
+        INSERT INTO orders(user_id, product, price, status)
+        VALUES($1,$2,$3,'pending')
+        RETURNING id
+    """, user_id, product, price)
 
-    # ===== CALLBACK =====
-    @dp.callback_query()
-    async def cb(call: types.CallbackQuery):
+    return row["id"]
 
-        # STARS SELECT
-        if call.data.startswith("star_"):
-            user_state[call.from_user.id] = call.data
+# ================= CALLBACK =================
+@router.callback_query(lambda c: c.data.startswith("star"))
+async def buy(call: types.CallbackQuery):
+    await call.answer()
 
-            await call.message.answer("📩 Nhập username Telegram (@username):")
+    amount = int(call.data.split("_")[1])
 
-            await call.answer()
+    price_map = {50:1, 100:2, 200:3, 500:6}
+    price = price_map.get(amount, amount)
 
-# ================= STARTUP =================
-@app.on_event("startup")
-async def startup():
-    await init_db()
+    order_id = await create_order(call.from_user.id, f"STAR {amount}", price)
 
-    rows = await db.fetch("SELECT * FROM tenants")
+    await call.message.answer(f"""
+🧾 <b>订单 #{order_id}</b>
 
-    print("🔥 TENANTS:", rows)
+⭐ 数量: {amount}
+💰 金额: {price} USDT
 
-    for r in rows:
-        token = (r["bot_token"] or "").strip()
+━━━━━━━━━━━━━━━
+💳 地址(TRC20):
 
-        print("✅ LOAD BOT:", token)
+TXXXXXXX
 
-        bot = Bot(token=token)
-        dp = Dispatcher(storage=MemoryStorage())
-
-        register(dp, r["id"], bot)
-
-        bots[token] = bot
-        dispatchers[token] = dp
-
-    print("🚀 TOTAL BOTS:", len(bots))
+⏳ 状态: 等待支付
+""")
 
 # ================= WEBHOOK =================
 @app.post("/{token}")
 async def webhook(token: str, request: Request):
-    token = token.strip()
-
-    data = await request.json()
-
-    print("🔥 WEBHOOK HIT")
-
-    if token not in bots:
-        print("❌ TOKEN NOT FOUND")
+    if token != BOT_TOKEN:
         return {"ok": False}
 
-    bot = bots[token]
-    dp = dispatchers[token]
+    data = await request.json()
+    logging.info(f"🔥 UPDATE: {data}")
 
-    update = Update(**data)
+    update = types.Update(**data)
 
-    await dp.feed_update(bot=bot, update=update)
+    asyncio.create_task(dp.feed_update(bot, update))
 
     return {"ok": True}
 
@@ -228,3 +212,8 @@ async def webhook(token: str, request: Request):
 @app.get("/")
 async def root():
     return {"status": "ok"}
+
+# ================= STARTUP =================
+@app.on_event("startup")
+async def startup():
+    await init_db()
