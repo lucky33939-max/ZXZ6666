@@ -1,5 +1,6 @@
 import os
 import asyncpg
+import random
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -17,22 +18,25 @@ async def init_db():
     global db
     db = await asyncpg.create_pool(DATABASE_URL)
 
+# ================= FOMO =================
+def fomo():
+    return random.randint(5, 25), random.randint(1, 5)
+
 # ================= MENU =================
-def main_menu():
+def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👑 Numbers", callback_data="numbers")],
-        [InlineKeyboardButton(text="🔥 Rent 888", callback_data="rent")],
+        [InlineKeyboardButton(text="👑 Số VIP", callback_data="numbers")],
+        [InlineKeyboardButton(text="🔥 Thuê 888", callback_data="rent")],
         [InlineKeyboardButton(text="💎 Premium", callback_data="premium")]
     ])
 
 # ================= REGISTER =================
 def register(dp, tenant_id, bot):
 
+    # ===== MESSAGE =====
     @dp.message()
-    async def msg_handler(msg: types.Message):
-        print("📩 MSG:", msg.text)
-
-        text = (msg.text or "").strip().lower()
+    async def msg(msg: types.Message):
+        text = (msg.text or "").lower()
 
         if text.startswith("/start"):
             await db.execute("""
@@ -41,40 +45,70 @@ def register(dp, tenant_id, bot):
                 ON CONFLICT DO NOTHING
             """, tenant_id, msg.from_user.id)
 
-            await msg.answer("🚀 Welcome", reply_markup=main_menu())
-            return
+            await msg.answer("🚀 Welcome", reply_markup=menu())
 
-        await msg.answer("👉 Gõ /start")
-
+    # ===== CALLBACK =====
     @dp.callback_query()
-    async def cb_handler(call: types.CallbackQuery):
-        print("🔘 CLICK:", call.data)
+    async def cb(call: types.CallbackQuery):
 
+        view, stock = fomo()
+
+        # ===== NUMBERS =====
         if call.data == "numbers":
-            await call.message.edit_text(
-                "👑 SIM LIST\n+44 = 70U\n+1 = 75U",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🛒 Buy", callback_data="buy")]
-                ])
-            )
+            await call.message.edit_text(f"""
+╔════════════════════╗
+     👑 VIP NUMBERS
+╚════════════════════╝
 
+🇬🇧 +44 → 70U  
+🇺🇸 +1 → 75U  
+
+━━━━━━━━━━━━━━━━━━
+🔥 {view} người đang xem
+⚡ Còn {stock} số
+""",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🛒 Mua ngay", callback_data="buy")]
+            ]))
+
+        # ===== 888 =====
         elif call.data == "rent":
-            await call.message.edit_text(
-                "🔥 888 thuê\n1 tháng = 99U\n3 tháng = 268U",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔥 Thuê ngay", callback_data="buy")]
-                ])
-            )
+            await call.message.edit_text(f"""
+╔════════════════════╗
+       🔥 888 VIP
+╚════════════════════╝
 
+1 tháng = 99U  
+3 tháng = 268U  
+
+━━━━━━━━━━━━━━━━━━
+🔥 {view} người đang xem
+⚡ Còn {stock} slot
+""",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔥 Thuê ngay", callback_data="buy")]
+            ]))
+
+        # ===== PREMIUM =====
         elif call.data == "premium":
-            await call.message.edit_text(
-                "💎 Premium\n3 tháng = 15U\n6 tháng = 20U\n1 năm = 36U",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="✅ Buy", callback_data="buy")]
-                ])
-            )
+            await call.message.edit_text("""
+💎 PREMIUM
 
+3 tháng = 15U  
+6 tháng = 20U  
+1 năm = 36U
+""",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Buy", callback_data="buy")]
+            ]))
+
+        # ===== BUY =====
         elif call.data == "buy":
+
+            # fake lock
+            if random.random() < 0.3:
+                await call.answer("⚠️ Có người vừa đặt!", show_alert=True)
+
             user = await db.fetchrow("""
                 SELECT id FROM users 
                 WHERE telegram_id=$1 AND tenant_id=$2
@@ -85,8 +119,8 @@ def register(dp, tenant_id, bot):
                 return
 
             order = await db.fetchrow("""
-                INSERT INTO orders (tenant_id, user_id, product_id)
-                VALUES ($1,$2,1)
+                INSERT INTO orders (tenant_id, user_id, product_id, amount)
+                VALUES ($1,$2,1,70)
                 RETURNING id
             """, tenant_id, user["id"])
 
@@ -94,12 +128,40 @@ def register(dp, tenant_id, bot):
                 "SELECT * FROM tenants WHERE id=$1", tenant_id
             )
 
+            # ===== INVOICE =====
+            await call.message.answer(f"""
+╔════════════════════╗
+        🧾 HOÁ ĐƠN
+╚════════════════════╝
+
+👤 User: {call.from_user.id}
+📦 VIP Number
+💰 70 USDT
+
+━━━━━━━━━━━━━━━━━━
+💳 TRC20:
+TXYZ-XXXX-XXXX
+
+📌 Nội dung:
+ORDER {order['id']}
+
+━━━━━━━━━━━━━━━━━━
+⏳ Chờ thanh toán
+
+🆔 #{order['id']}
+""")
+
+            # ===== ADMIN =====
             await bot.send_message(
                 tenant["admin_id"],
-                f"📥 Order #{order['id']} từ {call.from_user.id}"
-            )
+                f"""
+📥 ĐƠN MỚI
 
-            await call.message.answer(f"⏳ Order #{order['id']} created")
+👤 {call.from_user.id}
+💰 70U
+🆔 #{order['id']}
+"""
+            )
 
 # ================= STARTUP =================
 @app.on_event("startup")
@@ -114,9 +176,6 @@ async def startup():
         token = (r["bot_token"] or "").strip()
 
         print("✅ LOAD BOT:", token)
-
-        if not token:
-            continue
 
         bot = Bot(token=token)
         dp = Dispatcher()
@@ -133,14 +192,13 @@ async def startup():
 async def webhook(token: str, request: Request):
     token = token.strip()
 
-    print("🔥 WEBHOOK HIT:", token)
+    print("🔥 WEBHOOK:", token)
 
     data = await request.json()
-    print("📦 DATA:", data)
 
     if token not in bots:
-        print("❌ TOKEN NOT FOUND:", token)
-        print("📌 AVAILABLE:", list(bots.keys()))
+        print("❌ TOKEN NOT FOUND")
+        print("AVAILABLE:", list(bots.keys()))
         return {"ok": False}
 
     bot = bots[token]
@@ -151,3 +209,8 @@ async def webhook(token: str, request: Request):
     await dp.feed_update(bot, update)
 
     return {"ok": True}
+
+# ================= TEST =================
+@app.get("/")
+async def root():
+    return {"status": "ok"}
