@@ -1,26 +1,12 @@
-<!DOCTYPE html>
 <html>
-<body style="background:#0f172a;color:white;font-family:sans-serif">
+<body style="background:black;color:white">
 
-<h2>💎 BANK DASHBOARD</h2>
+<h2>💎 Dashboard</h2>
 
-<div id="stats"></div>
-<div id="orders"></div>
+<div id="data"></div>
 
 <script>
-async function load(){
- let s=await fetch('/admin/stats').then(r=>r.json())
- document.getElementById("stats").innerHTML=
- "👤 "+s.users+" | 📦 "+s.orders+" | 💰 $"+s.revenue
-
- let o=await fetch('/admin/orders').then(r=>r.json())
- let html=""
- o.forEach(i=>{
-  html+=`<div>#${i.id} - ${i.amount} USDT - ${i.status}</div>`
- })
- document.getElementById("orders").innerHTML=html
-}
-load()
+fetch('/admin').then(()=>{})
 </script>
 
 </body>
