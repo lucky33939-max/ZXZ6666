@@ -1,24 +1,31 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from pathlib import Path
+import asyncio
 
 from bot import dp, bot
-from db import init_db, db_pool
+from db import init_db
 
 app = FastAPI()
 
-# ✅ ROOT FIX
+db_pool = None
+
+# ROOT
 @app.get("/")
 async def root():
     return {"ok": True}
 
-# ✅ TELEGRAM WEBHOOK
+# TELEGRAM WEBHOOK
 @app.post("/")
 async def telegram_webhook(request: Request):
     data = await request.json()
-    await dp.feed_raw_update(bot, data)
+
+    # ⚡ chạy async tránh lag
+    asyncio.create_task(dp.feed_raw_update(bot, data))
+
     return {"ok": True}
 
-# ✅ PAYMENT WEBHOOK
+# PAYMENT WEBHOOK
 @app.post("/payment-hook")
 async def payment_hook(request: Request):
     data = await request.json()
@@ -44,13 +51,14 @@ async def payment_hook(request: Request):
 
     return {"ok": True}
 
-# ✅ ADMIN
+# ADMIN PAGE
 @app.get("/admin", response_class=HTMLResponse)
 async def admin():
-    return open("index.html").read()
+    return Path("index.html").read_text()
 
-# ✅ STARTUP FIX (QUAN TRỌNG)
+# STARTUP
 @app.on_event("startup")
 async def startup():
-    await init_db()
+    global db_pool
+    db_pool = await init_db()
     print("✅ DB READY")
