@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from bot import dp, bot
-from db import init_db, get_pool
+from db import init_db, get_pool, create_tables
 
 logging.basicConfig(level=logging.INFO)
 
@@ -117,7 +117,8 @@ async def ping():
 # =========================
 # STARTUP
 # =========================
+
 @app.on_event("startup")
 async def startup():
     await init_db()
-    logging.info("✅ DB READY")
+    await create_tables()
