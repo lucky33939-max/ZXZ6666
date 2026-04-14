@@ -1,17 +1,26 @@
 from aiogram import Bot, Dispatcher, types
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 from config import BOT_TOKEN
 from db import db, get_user
 from payment import create_invoice
 
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+# ✅ FIX parse_mode chuẩn V3
+bot = Bot(
+    token=BOT_TOKEN,
+    default=Bot.Defaults(parse_mode=ParseMode.HTML)
+)
+
 dp = Dispatcher()
 
+# ===== MENU =====
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="⭐ 星星充值", callback_data="stars"),
-            InlineKeyboardButton(text="💰 余额充值", callback_data="topup")
+            InlineKeyboardButton(text="⭐ 购买星星", callback_data="stars"),
+            InlineKeyboardButton(text="💰 充值余额", callback_data="topup")
         ],
         [
             InlineKeyboardButton(text="👤 个人中心", callback_data="profile"),
@@ -19,27 +28,28 @@ def menu():
         ]
     ])
 
-@dp.message()
+# ===== START =====
+@dp.message(Command("start"))
 async def start(msg: types.Message):
     user = await get_user(msg.from_user.id)
 
     await msg.answer(f"""
 💎 VIP SYSTEM
 
-ID: {msg.from_user.id}
-余额: {user['balance']} USDT
+👤 ID: {msg.from_user.id}
+💰 余额: {user['balance']} USDT
 """, reply_markup=menu())
 
-
+# ===== CALLBACK =====
 @dp.callback_query()
 async def cb(call: types.CallbackQuery):
-    await call.answer("⚡")
+    await call.answer()
 
     user_id = call.from_user.id
 
     if call.data == "stars":
         await call.message.edit_text("""
-⭐ 选择充值:
+⭐ 选择套餐:
 
 50⭐ = 1$
 100⭐ = 2$
@@ -58,9 +68,10 @@ async def cb(call: types.CallbackQuery):
         link = await create_invoice(order_id, 1)
 
         await call.message.answer(f"""
-💳 支付订单 #{order_id}
+💳 订单 #{order_id}
 
-👉 {link}
+👉 支付链接:
+{link}
 """)
 
     elif call.data == "profile":
@@ -69,5 +80,10 @@ async def cb(call: types.CallbackQuery):
         await call.message.edit_text(f"""
 👤 个人中心
 
-余额: {user['balance']} USDT
+💰 余额: {user['balance']} USDT
 """, reply_markup=menu())
+
+# ===== FALLBACK (FIX NOT HANDLED) =====
+@dp.message()
+async def fallback(msg: types.Message):
+    await msg.answer("⚡ 系统运行中...")
