@@ -17,35 +17,55 @@ dp = Dispatcher()
 
 
 # =========================
-# MENU
+# MENU APP STYLE
 # =========================
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 888号码", callback_data="rent")],
-        [InlineKeyboardButton(text="🌍 全球号码", callback_data="market")],
-        [InlineKeyboardButton(text="👤 个人中心", callback_data="profile")]
+
+        [
+            InlineKeyboardButton(text="🛒 账号市场", callback_data="list"),
+            InlineKeyboardButton(text="💎 VIP号码", callback_data="vip")
+        ],
+
+        [
+            InlineKeyboardButton(text="⭐ 星星充值", callback_data="stars"),
+            InlineKeyboardButton(text="💰 余额充值", callback_data="topup")
+        ],
+
+        [
+            InlineKeyboardButton(text="📊 订单记录", callback_data="orders"),
+            InlineKeyboardButton(text="🎁 邀请赚钱", callback_data="ref")
+        ]
     ])
 
 
 # =========================
-# START
+# START (BANNER)
 # =========================
 @dp.message(Command("start"))
 async def start(msg: types.Message):
+
     user = await get_user(msg.from_user.id)
 
-    await msg.answer(f"""
-💎 <b>VIP系统</b>
+    await msg.answer_photo(
+        photo="https://i.imgur.com/8Km9tLL.png",
+        caption=f"""
+💎 <b>GLOBAL VIP SYSTEM</b>
 
-👤 ID: <code>{msg.from_user.id}</code>
-💰 余额: <b>{user['balance']} USDT</b>
+━━━━━━━━━━━━━━
+👤 用户ID: <code>{msg.from_user.id}</code>  
+💰 余额: <b>{user['balance']} USDT</b>  
+━━━━━━━━━━━━━━
 
-🔥 在线: {random.randint(100,300)}
-""", reply_markup=menu())
+🔥 在线用户: {random.randint(120,300)}  
+💸 今日成交: {random.randint(80,200)} 单  
+""",
+        reply_markup=menu()
+    )
 
 
 # =========================
-# CALLBACK
+# CALLBACK MAIN
 # =========================
 @dp.callback_query()
 async def cb(call: types.CallbackQuery):
@@ -59,191 +79,134 @@ async def cb(call: types.CallbackQuery):
     pool = get_pool()
 
     # =========================
-    # HOME
+    # 🛒 ACCOUNT MARKET
     # =========================
-    if call.data == "back":
-        user = await get_user(user_id)
-        await call.message.edit_text(
-            f"💎 VIP系统\n\n💰 {user['balance']} USDT",
-            reply_markup=menu()
-        )
+    if call.data == "list":
+
+        await call.message.edit_text(f"""
+🛒 <b>Account List</b>
+
+━━━━━━━━━━━━━━
+
++1 530-955-0999 — 75U  
++1 559-468-0999 — 75U  
++1 971-403-2222 — 75U  
++1 802-945-9666 — 75U  
+
+━━━━━━━━━━━━━━
+
++44 7988 587333 — 70U  
++44 7429 918444 — 70U  
+
+━━━━━━━━━━━━━━
+🔥 {random.randint(30,120)} users viewing
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🌍 Select Market", callback_data="country")],
+            [InlineKeyboardButton(text="🔙 Back", callback_data="back")]
+        ])
+    )
 
     # =========================
-    # MARKET
+    # 🌍 MARKET
     # =========================
-    elif call.data == "market":
-        await call.message.edit_text("""
+    elif call.data == "country":
+
+        await call.message.edit_text(f"""
 🌍 <b>全球号码市场</b>
 
-🇺🇸 USA  
-🇬🇧 UK  
-💎 888专区
-""", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💎 888专区", callback_data="rent")],
-            [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
-        ]))
-
-    # =========================
-    # LIST 888
-    # =========================
-    elif call.data == "rent":
-
-        async with pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM numbers LIMIT 10")
-
-        text = "📦 <b>888号码列表</b>\n━━━━━━━━━━━━━━\n\n"
-        keyboard = []
-
-        for r in rows:
-            status = "🟢" if r["status"] == "free" else "🔴"
-            text += f"{status} <code>{r['number']}</code>\n"
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    text=r['number'],
-                    callback_data=f"select_{r['id']}"
-                )
-            ])
-
-        keyboard.append([InlineKeyboardButton(text="🔙 返回", callback_data="back")])
-
-        await call.message.edit_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-        )
-
-    # =========================
-    # LOCK
-    # =========================
-    elif call.data.startswith("select_"):
-
-        num_id = int(call.data.split("_")[1])
-
-        async with pool.acquire() as conn:
-
-            row = await conn.fetchrow(
-                "SELECT * FROM numbers WHERE id=$1",
-                num_id
-            )
-
-            if not row:
-                return
-
-            await conn.execute("""
-            UPDATE numbers
-            SET status='locked',
-                locked_by=$1,
-                locked_until=NOW() + INTERVAL '5 minutes'
-            WHERE id=$2
-            """, user_id, num_id)
-
-        await call.message.edit_text(f"""
-🔒 <b>已锁定</b>
-
-📞 <code>{row['number']}</code>
-
-⏳ 5分钟内完成支付
-""", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 1个月 99U", callback_data=f"pay1_{num_id}")],
-            [InlineKeyboardButton(text="💳 3个月 268U", callback_data=f"pay3_{num_id}")],
-            [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
-        ]))
-
-    # =========================
-    # CREATE ORDER
-    # =========================
-    elif call.data.startswith("pay"):
-
-        num_id = int(call.data.split("_")[1])
-        amount = 99 if "pay1" in call.data else 268
-
-        async with pool.acquire() as conn:
-
-            order_id = await conn.fetchval(
-                "INSERT INTO orders(user_id,amount) VALUES($1,$2) RETURNING id",
-                user_id, amount
-            )
-
-        # 💎 INVOICE
-        await call.message.edit_text(f"""
-💳 <b>订单已创建</b>
-
-━━━━━━━━━━━━━━
-🆔 <code>#{order_id}</code>
-💰 <b>{amount} USDT</b>
 ━━━━━━━━━━━━━━
 
-📤 请付款后上传凭证
-""", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📤 上传凭证", callback_data=f"upload_{order_id}")],
-            [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
-        ]))
+🇺🇸 USA VIP号码  
+🇬🇧 英国号码  
+🇨🇦 加拿大号码  
+🇦🇪 阿联酋号码  
 
-        # ADMIN
-        await bot.send_message(
-            ADMIN_ID,
-            f"""
-🆕 新订单
+💎 888靓号专区  
 
-🆔 {order_id}
-👤 {user_id}
-💰 {amount}U
+━━━━━━━━━━━━━━
+🔥 {random.randint(30,120)} 人正在浏览
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🇮🇳 India - $0.51", callback_data="c_india")],
+            [InlineKeyboardButton(text="🇵🇭 Philippines - $0.79", callback_data="c_ph")],
+            [InlineKeyboardButton(text="🇹🇭 Thailand - $1.20", callback_data="c_th")],
+            [InlineKeyboardButton(text="🇦🇪 UAE - $2.85", callback_data="c_uae")],
+            [InlineKeyboardButton(text="🇬🇧 UK VIP - $60", callback_data="c_uk")],
+            [InlineKeyboardButton(text="💎 888号码 - $99", callback_data="rent")],
+            [InlineKeyboardButton(text="🔙 Back", callback_data="back")]
+        ])
+    )
+
+    # =========================
+    # ⭐ STARS
+    # =========================
+    elif call.data == "stars":
+
+        await call.message.answer_photo(
+            photo="https://i.imgur.com/ZF6s192.png",
+            caption="""
+⭐ <b>Telegram Stars</b>
+
+━━━━━━━━━━━━━━
+⭐ 50 = 1U  
+⭐ 100 = 2U  
+⭐ 200 = 4U  
+⭐ 500 = 10U  
+⭐ 1000 = 20U  
+━━━━━━━━━━━━━━
+
+👇 请选择充值方式
 """,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ 已收款", callback_data=f"confirm_{order_id}"),
-                    InlineKeyboardButton(text="❌ 未收款", callback_data=f"reject_{order_id}")
-                ]
+                [InlineKeyboardButton(text="💎 给当前账号充值", callback_data="top_self")],
+                [InlineKeyboardButton(text="🎁 给他人充值", callback_data="top_other")],
+                [InlineKeyboardButton(text="💱 兑换TON", callback_data="ton")],
+                [InlineKeyboardButton(text="❌ 关闭", callback_data="back")]
             ])
         )
 
     # =========================
-    # ADMIN CONFIRM
+    # 💎 VIP
     # =========================
-    elif call.data.startswith("confirm_"):
+    elif call.data == "vip":
 
-        order_id = int(call.data.split("_")[1])
+        await call.message.edit_text(f"""
+💎 <b>Telegram Premium</b>
 
-        async with pool.acquire() as conn:
+━━━━━━━━━━━━━━
+👤 用户: {call.from_user.username}
+━━━━━━━━━━━━━━
 
-            await conn.execute(
-                "UPDATE orders SET status='paid' WHERE id=$1",
-                order_id
-            )
+请选择套餐 👇
+""",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="3个月 / 15U", callback_data="vip3")],
+            [InlineKeyboardButton(text="半年 / 25U", callback_data="vip6")],
+            [InlineKeyboardButton(text="一年 / 35U", callback_data="vip12")],
+            [
+                InlineKeyboardButton(text="❌ 取消", callback_data="back"),
+                InlineKeyboardButton(text="👨‍💼 联系客服", url="https://t.me/your_support")
+            ]
+        ])
+    )
 
-            row = await conn.fetchrow(
-                "SELECT * FROM orders WHERE id=$1",
-                order_id
-            )
+    # =========================
+    # 🔙 BACK
+    # =========================
+    elif call.data == "back":
+        user = await get_user(user_id)
 
-            user_id = row["user_id"]
+        await call.message.edit_text(f"""
+💎 <b>GLOBAL VIP SYSTEM</b>
 
-            acc = await conn.fetchrow("""
-            SELECT * FROM accounts WHERE status='free' LIMIT 1
-            """)
-
-            if acc:
-                await conn.execute(
-                    "UPDATE accounts SET status='used' WHERE id=$1",
-                    acc["id"]
-                )
-
-                await bot.send_message(
-                    user_id,
-                    f"""
-🎉 购买成功
-
-👤 {acc['username']}
-🔑 {acc['password']}
-"""
-                )
-
-        await call.message.edit_text("✅ 已确认收款")
-
-    elif call.data.startswith("reject_"):
-        await call.message.edit_text("❌ 未收款")
+💰 余额: {user['balance']} USDT
+""", reply_markup=menu())
 
 
+# =========================
+# FALLBACK
+# =========================
 @dp.message()
 async def fallback(msg: types.Message):
     await msg.answer("⚡ 系统正常运行")
