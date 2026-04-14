@@ -11,7 +11,7 @@
 async function load(){
  let s=await fetch('/admin/stats').then(r=>r.json())
  document.getElementById("stats").innerHTML=
- "Users:"+s.users+" | Orders:"+s.orders+" | $"+s.revenue
+ "👤 "+s.users+" | 📦 "+s.orders+" | 💰 $"+s.revenue
 
  let o=await fetch('/admin/orders').then(r=>r.json())
  let html=""
