@@ -1,21 +1,14 @@
 from aiogram import Bot, Dispatcher, types
-from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import BOT_TOKEN
-from db import db, get_user
+from db import db_pool, get_user
 from payment import create_invoice
 
-# ✅ FIX parse_mode chuẩn V3
-bot = Bot(
-    token=BOT_TOKEN,
-    default=Bot.Defaults(parse_mode=ParseMode.HTML)
-)
-
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ===== MENU =====
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -28,7 +21,6 @@ def menu():
         ]
     ])
 
-# ===== START =====
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     user = await get_user(msg.from_user.id)
@@ -40,7 +32,7 @@ async def start(msg: types.Message):
 💰 余额: {user['balance']} USDT
 """, reply_markup=menu())
 
-# ===== CALLBACK =====
+
 @dp.callback_query()
 async def cb(call: types.CallbackQuery):
     await call.answer()
@@ -52,13 +44,12 @@ async def cb(call: types.CallbackQuery):
 ⭐ 选择套餐:
 
 50⭐ = 1$
-100⭐ = 2$
 """, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="50⭐", callback_data="buy_1")]
         ]))
 
     elif call.data == "buy_1":
-        async with db.acquire() as conn:
+        async with db_pool.acquire() as conn:
             order_id = await conn.fetchval("""
             INSERT INTO orders(user_id, amount)
             VALUES($1,1)
@@ -70,8 +61,7 @@ async def cb(call: types.CallbackQuery):
         await call.message.answer(f"""
 💳 订单 #{order_id}
 
-👉 支付链接:
-{link}
+👉 {link}
 """)
 
     elif call.data == "profile":
@@ -83,7 +73,8 @@ async def cb(call: types.CallbackQuery):
 💰 余额: {user['balance']} USDT
 """, reply_markup=menu())
 
-# ===== FALLBACK (FIX NOT HANDLED) =====
+
+# ✅ fallback fix lag
 @dp.message()
 async def fallback(msg: types.Message):
-    await msg.answer("⚡ 系统运行中...")
+    await msg.answer("⚡ 系统正常运行")
