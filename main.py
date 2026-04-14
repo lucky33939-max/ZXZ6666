@@ -1,223 +1,191 @@
-import os
 import asyncio
-import logging
-import random
 import asyncpg
+import os
+import time
+import logging
 
 from fastapi import FastAPI, Request
-from aiogram import Bot, Dispatcher, types, Router
-from aiogram.client.default import DefaultBotProperties
+from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.client.default import DefaultBotProperties
 
-# ===== CONFIG =====
+# =====================
+# CONFIG
+# =====================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
-logging.basicConfig(level=logging.INFO)
+# =====================
+# INIT
+# =====================
+
+app = FastAPI()
+dp = Dispatcher()
 
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 
-dp = Dispatcher()
-router = Router()
-dp.include_router(router)
-
-app = FastAPI()
 db = None
 
-user_lock = {}
+# =====================
+# CACHE
+# =====================
 
-# ================= DB =================
+user_cache = {}
+last_click = {}
+
+# =====================
+# DB CONNECT
+# =====================
+
 async def init_db():
     global db
-    while True:
-        try:
-            db = await asyncpg.create_pool(DATABASE_URL)
+    db = await asyncpg.create_pool(
+        DATABASE_URL,
+        min_size=1,
+        max_size=3,
+        command_timeout=3
+    )
+    print("✅ DB READY")
 
-            await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                telegram_id BIGINT UNIQUE,
-                balance FLOAT DEFAULT 0
-            );
-            """)
+# =====================
+# USER
+# =====================
 
-            await db.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                product TEXT,
-                price FLOAT,
-                status TEXT,
-                created_at TIMESTAMP DEFAULT NOW()
-            );
-            """)
+async def get_user(user_id):
+    if user_id in user_cache:
+        return user_cache[user_id]
 
-            print("✅ DB READY")
-            break
-        except Exception as e:
-            print("❌ DB ERROR:", e)
-            await asyncio.sleep(2)
-
-# ================= MENU =================
-def main_menu():
-    return types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="💎 开通会员"), types.KeyboardButton(text="✨ 购买星星")],
-            [types.KeyboardButton(text="👑 靓号市场"), types.KeyboardButton(text="🔥 888靓号")],
-            [types.KeyboardButton(text="💰 余额充值"), types.KeyboardButton(text="👤 个人中心")],
-            [types.KeyboardButton(text="📦 我的订单"), types.KeyboardButton(text="👨‍💻 客服")]
-        ],
-        resize_keyboard=True
+    user = await db.fetchrow(
+        "SELECT * FROM users WHERE telegram_id=$1",
+        user_id
     )
 
-# ================= USER =================
-async def get_user(user_id):
-    user = await db.fetchrow("SELECT * FROM users WHERE telegram_id=$1", user_id)
     if not user:
-        await db.execute("INSERT INTO users(telegram_id) VALUES($1)", user_id)
-        user = await db.fetchrow("SELECT * FROM users WHERE telegram_id=$1", user_id)
+        await db.execute(
+            "INSERT INTO users(telegram_id, balance) VALUES($1, 0)",
+            user_id
+        )
+        user = {"telegram_id": user_id, "balance": 0}
+
+    user_cache[user_id] = user
     return user
 
-# ================= START =================
-@router.message(lambda msg: msg.text == "/start")
-async def start(msg: types.Message):
-    await get_user(msg.from_user.id)
+# =====================
+# ANTI SPAM
+# =====================
 
-    await msg.answer("""
-<b>🚀 欢迎使用系统</b>
+def anti_spam(user_id):
+    now = time.time()
+    if user_id in last_click and now - last_click[user_id] < 1:
+        return True
+    last_click[user_id] = now
+    return False
 
-⚡ 自动化交易系统
-""", reply_markup=main_menu())
+# =====================
+# MENU
+# =====================
 
-# ================= STARS =================
-@router.message(lambda msg: msg.text == "✨ 购买星星")
-async def stars(msg: types.Message):
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="50⭐ / 1$", callback_data="star_50"),
-         types.InlineKeyboardButton(text="100⭐ / 2$", callback_data="star_100")],
-        [types.InlineKeyboardButton(text="200⭐ / 3$", callback_data="star_200"),
-         types.InlineKeyboardButton(text="500⭐ / 6$", callback_data="star_500")]
-    ])
-    await msg.answer("✨ <b>请选择套餐</b>", reply_markup=kb)
+MAIN_MENU = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="💎 开通会员", callback_data="vip")],
+    [InlineKeyboardButton(text="⭐ 购买星星", callback_data="stars")],
+    [InlineKeyboardButton(text="👤 个人中心", callback_data="profile")],
+    [InlineKeyboardButton(text="💰 余额充值", callback_data="topup")],
+])
 
-# ================= CREATE ORDER =================
-async def create_order(user_id, product, price):
-    row = await db.fetchrow("""
-        INSERT INTO orders(user_id, product, price, status)
-        VALUES($1,$2,$3,'pending')
-        RETURNING id
-    """, user_id, product, price)
-    return row["id"]
+# =====================
+# HANDLER
+# =====================
 
-# ================= CALLBACK =================
-@router.callback_query(lambda c: c.data.startswith("star"))
-async def buy(call: types.CallbackQuery):
+@dp.message()
+async def handle_message(message: types.Message):
+    user_id = message.from_user.id
 
-    if call.from_user.id in user_lock:
-        await call.answer("⚠️ 操作太快", show_alert=True)
+    if anti_spam(user_id):
         return
 
-    user_lock[call.from_user.id] = True
+    await get_user(user_id)
 
-    await call.answer()
+    if message.text == "/start":
+        await message.answer(
+            "👋 欢迎使用系统\n请选择功能👇",
+            reply_markup=MAIN_MENU
+        )
+    else:
+        await message.answer("⚡ 系统处理中...")
+
+# =====================
+# CALLBACK
+# =====================
+
+@dp.callback_query()
+async def handle_callback(call: types.CallbackQuery):
+    user_id = call.from_user.id
+
+    if anti_spam(user_id):
+        await call.answer("⚡ 请慢一点")
+        return
+
+    await call.answer("⚡ 处理中...")
 
     try:
-        amount = int(call.data.split("_")[1])
-        price_map = {50:1, 100:2, 200:3, 500:6}
-        price = price_map.get(amount, amount)
+        if call.data == "profile":
+            user = await get_user(user_id)
 
-        user = await get_user(call.from_user.id)
+            text = f"""
+👤 用户中心
 
-        # ===== BALANCE PAY =====
-        if user["balance"] >= price:
-            await db.execute("""
-            UPDATE users SET balance = balance - $1
-            WHERE telegram_id=$2
-            """, price, call.from_user.id)
+ID: {user_id}
+余额: {user.get("balance", 0)} USDT
+"""
+            await call.message.edit_text(text, reply_markup=MAIN_MENU)
 
-            await call.message.answer("✅ 支付成功（余额）")
+        elif call.data == "topup":
+            await call.message.edit_text(
+                "💰 选择充值金额",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="10 USDT", callback_data="pay_10")],
+                    [InlineKeyboardButton(text="50 USDT", callback_data="pay_50")],
+                    [InlineKeyboardButton(text="100 USDT", callback_data="pay_100")]
+                ])
+            )
 
-            await call.message.answer(f"📦 ⭐ {amount} 已到账")
-            return
+        else:
+            await call.message.answer("🚀 功能开发中...")
 
-        # ===== CREATE ORDER =====
-        order_id = await create_order(call.from_user.id, f"STAR {amount}", price)
+    except:
+        pass  # tránh lỗi edit message
 
-        await call.message.answer(f"""
-🧾 <b>订单 #{order_id}</b>
+# =====================
+# WEBHOOK
+# =====================
 
-⭐ 数量: {amount}
-💰 金额: {price} USDT
-
-━━━━━━━━━━━━━━━
-💳 地址(TRC20):
-
-<code>TXXXXXXX</code>
-
-⏳ 状态: 等待支付
-""")
-
-        # ===== ADMIN ALERT =====
-        if ADMIN_ID:
-            await bot.send_message(ADMIN_ID, f"💰 新订单 #{order_id} - {price}U")
-
-    except Exception as e:
-        print("❌ ERROR:", e)
-
-    finally:
-        del user_lock[call.from_user.id]
-
-# ================= PROFILE =================
-@router.message(lambda msg: msg.text == "👤 个人中心")
-async def profile(msg: types.Message):
-    user = await get_user(msg.from_user.id)
-
-    await msg.answer(f"""
-👤 <b>个人中心</b>
-
-🆔 {msg.from_user.id}
-💰 余额: {user['balance']} USDT
-""")
-
-# ================= ORDERS =================
-@router.message(lambda msg: msg.text == "📦 我的订单")
-async def orders(msg: types.Message):
-    rows = await db.fetch("""
-    SELECT * FROM orders WHERE user_id=$1 ORDER BY id DESC LIMIT 5
-    """, msg.from_user.id)
-
-    text = "📦 <b>最近订单</b>\n\n"
-
-    for r in rows:
-        text += f"#{r['id']} - {r['status']} - {r['price']}U\n"
-
-    await msg.answer(text)
-
-# ================= WEBHOOK =================
 @app.post("/{token}")
 async def webhook(token: str, request: Request):
     if token != BOT_TOKEN:
         return {"ok": False}
 
     data = await request.json()
-    logging.info(f"🔥 UPDATE")
-
     update = types.Update(**data)
 
-    asyncio.create_task(dp.feed_update(bot, update))
+    asyncio.create_task(process_update(update))
 
     return {"ok": True}
 
-# ================= ROOT =================
-@app.get("/")
-async def root():
-    return {"status": "ok"}
+async def process_update(update):
+    try:
+        await dp.feed_update(bot, update)
+    except Exception as e:
+        print("ERROR:", e)
 
-# ================= STARTUP =================
+# =====================
+# STARTUP
+# =====================
+
 @app.on_event("startup")
 async def startup():
     await init_db()
