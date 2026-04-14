@@ -1,16 +1,20 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from pathlib import Path
 import asyncio
+import logging
+from pathlib import Path
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse
 
 from bot import dp, bot
 from db import init_db, get_pool
+
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI()
 
 
 # =========================
-# ROOT CHECK
+# ROOT
 # =========================
 @app.get("/")
 async def root():
@@ -18,59 +22,79 @@ async def root():
 
 
 # =========================
-# TELEGRAM WEBHOOK (ANTI LAG)
+# TELEGRAM WEBHOOK
 # =========================
 @app.post("/")
 async def telegram_webhook(request: Request):
-    data = await request.json()
-
-    # ⚡ xử lý async không block
-    asyncio.create_task(dp.feed_raw_update(bot, data))
-
-    return {"ok": True}
+    try:
+        data = await request.json()
+        asyncio.create_task(dp.feed_raw_update(bot, data))
+        return {"ok": True}
+    except Exception as e:
+        logging.exception("Webhook error")
+        raise HTTPException(500, "Webhook failed")
 
 
 # =========================
-# PAYMENT WEBHOOK (AUTO MONEY)
+# PAYMENT WEBHOOK (SAFE)
 # =========================
 @app.post("/payment-hook")
 async def payment_hook(request: Request):
     data = await request.json()
 
-    if data.get("payment_status") == "finished":
-        order_id = int(data["order_id"])
+    # ❗ validate basic payload
+    if data.get("payment_status") != "finished":
+        return {"ok": True}
 
-        pool = get_pool()
+    if "order_id" not in data:
+        raise HTTPException(400, "Missing order_id")
 
-        async with pool.acquire() as conn:
+    order_id = int(data["order_id"])
+
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():  # 🔥 chống double payment
+            row = await conn.fetchrow(
+                "SELECT * FROM orders WHERE id=$1 FOR UPDATE",
+                order_id
+            )
+
+            if not row:
+                raise HTTPException(404, "Order not found")
+
+            if row["status"] == "paid":
+                logging.warning(f"Duplicate payment: {order_id}")
+                return {"ok": True}
+
+            # update order
             await conn.execute(
                 "UPDATE orders SET status='paid' WHERE id=$1",
                 order_id
             )
 
-            row = await conn.fetchrow(
-                "SELECT * FROM orders WHERE id=$1",
-                order_id
+            # update balance
+            await conn.execute(
+                "UPDATE users SET balance = balance + $1 WHERE id=$2",
+                row["amount"], row["user_id"]
             )
 
-            # 💰 cộng tiền vào user
-            if row:
-                await conn.execute(
-                    "UPDATE users SET balance = balance + $1 WHERE id=$2",
-                    row["amount"], row["user_id"]
-                )
-
-        if row:
-            await bot.send_message(
-                row["user_id"],
-                f"💎 支付成功\n\n订单 #{order_id}\n💰 已到账 {row['amount']} USDT"
-            )
+    # send message outside transaction
+    try:
+        await bot.send_message(
+            row["user_id"],
+            f"💎 Thanh toán thành công\n\n"
+            f"🧾 Đơn #{order_id}\n"
+            f"💰 +{row['amount']} USDT"
+        )
+    except Exception:
+        logging.exception("Send message failed")
 
     return {"ok": True}
 
 
 # =========================
-# ADMIN PAGE (WEB UI)
+# ADMIN PAGE
 # =========================
 @app.get("/admin", response_class=HTMLResponse)
 async def admin():
@@ -83,7 +107,7 @@ async def admin():
 
 
 # =========================
-# HEALTH CHECK (ANTI SLEEP)
+# HEALTH CHECK
 # =========================
 @app.get("/ping")
 async def ping():
@@ -91,9 +115,9 @@ async def ping():
 
 
 # =========================
-# STARTUP (DB INIT)
+# STARTUP
 # =========================
 @app.on_event("startup")
 async def startup():
     await init_db()
-    print("✅ DB READY")
+    logging.info("✅ DB READY")
