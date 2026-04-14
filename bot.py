@@ -6,178 +6,83 @@ from config import BOT_TOKEN
 from db import get_user, get_pool
 from payment import create_invoice
 
+import random
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-# =========================
-# MAIN MENU (BANK STYLE)
-# =========================
-def main_menu():
+def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 租赁 888 号码", callback_data="rent")],
-        [InlineKeyboardButton(text="🛒 购买号码", callback_data="buy_number")],
         [
-            InlineKeyboardButton(text="💎 开通会员", callback_data="vip"),
-            InlineKeyboardButton(text="⭐ 购买星星", callback_data="stars")
+            InlineKeyboardButton(text="⭐ 星星", callback_data="stars"),
+            InlineKeyboardButton(text="💰 充值", callback_data="topup")
         ],
         [
-            InlineKeyboardButton(text="💰 余额充值", callback_data="topup"),
-            InlineKeyboardButton(text="👤 个人中心", callback_data="profile")
+            InlineKeyboardButton(text="👤 我的", callback_data="profile")
         ]
     ])
 
 
-# =========================
-# START
-# =========================
 @dp.message(Command("start"))
 async def start(msg: types.Message):
     user = await get_user(msg.from_user.id)
 
     text = (
-        "💎 欢迎使用 VIP 系统\n\n"
-        f"👤 用户ID: {msg.from_user.id}\n"
+        "💎 VIP SYSTEM\n\n"
+        f"👤 ID: {msg.from_user.id}\n"
         f"💰 余额: {user['balance']} USDT\n\n"
-        "请选择功能👇"
+        f"🔥 在线: {random.randint(10,50)}"
     )
 
-    await msg.answer(text, reply_markup=main_menu())
+    await msg.answer(text, reply_markup=menu())
 
 
-# =========================
-# CALLBACK HANDLER
-# =========================
 @dp.callback_query()
 async def cb(call: types.CallbackQuery):
-    await call.answer()
+    await call.answer("⚡")
+
     user_id = call.from_user.id
     pool = get_pool()
 
-    # =========================
-    # ⭐ STARS
-    # =========================
     if call.data == "stars":
         await call.message.edit_text(
-            "⭐ 选择星星套餐",
+            "⭐ 选择套餐",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="50⭐ / 1$", callback_data="buy_star_1"),
-                    InlineKeyboardButton(text="100⭐ / 2$", callback_data="buy_star_2")
-                ],
-                [
-                    InlineKeyboardButton(text="500⭐", callback_data="buy_star_5"),
-                    InlineKeyboardButton(text="1000⭐", callback_data="buy_star_10")
-                ],
-                [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
+                [InlineKeyboardButton(text="50⭐ = 1$", callback_data="buy_1")]
             ])
         )
 
-    elif call.data.startswith("buy_star"):
-        amount = int(call.data.split("_")[-1])
+    elif call.data == "buy_1":
 
         async with pool.acquire() as conn:
             order_id = await conn.fetchval(
-                "INSERT INTO orders(user_id, amount) VALUES($1,$2) RETURNING id",
-                user_id, amount
+                "INSERT INTO orders(user_id,amount) VALUES($1,1) RETURNING id",
+                user_id
             )
 
-        link = await create_invoice(order_id, amount)
+        link = await create_invoice(order_id, 1)
+
+        # 💣 FIX CRASH
+        if not link:
+            link = "❌ Payment error"
 
         await call.message.answer(
-            f"💳 订单 #{order_id}\n\n点击支付👇\n{link}"
+            f"💳 订单 #{order_id}\n\n{link}"
         )
 
-    # =========================
-    # 💰 TOPUP
-    # =========================
     elif call.data == "topup":
-        await call.message.edit_text(
-            "💰 选择充值金额",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="10 USDT", callback_data="top_10"),
-                    InlineKeyboardButton(text="50 USDT", callback_data="top_50")
-                ],
-                [
-                    InlineKeyboardButton(text="100 USDT", callback_data="top_100"),
-                    InlineKeyboardButton(text="500 USDT", callback_data="top_500")
-                ],
-                [
-                    InlineKeyboardButton(text="1000 USDT", callback_data="top_1000"),
-                    InlineKeyboardButton(text="5000 USDT", callback_data="top_5000")
-                ],
-                [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
-            ])
-        )
+        await call.message.edit_text("💰 充值中...", reply_markup=menu())
 
-    elif call.data.startswith("top_"):
-        amount = int(call.data.split("_")[1])
-
-        async with pool.acquire() as conn:
-            order_id = await conn.fetchval(
-                "INSERT INTO orders(user_id, amount) VALUES($1,$2) RETURNING id",
-                user_id, amount
-            )
-
-        link = await create_invoice(order_id, amount)
-
-        await call.message.answer(
-            f"💰 充值订单 #{order_id}\n\n👉 {link}"
-        )
-
-    # =========================
-    # 👤 PROFILE
-    # =========================
     elif call.data == "profile":
         user = await get_user(user_id)
 
         await call.message.edit_text(
-            f"👤 用户中心\n\n💰 余额: {user['balance']} USDT",
-            reply_markup=main_menu()
-        )
-
-    # =========================
-    # 📦 RENT NUMBER
-    # =========================
-    elif call.data == "rent":
-        await call.message.edit_text(
-            "📦 可租号码",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="+888 0519 3764 🟢", callback_data="rent_1")],
-                [InlineKeyboardButton(text="+888 0795 1643 🟢", callback_data="rent_2")],
-                [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
-            ])
-        )
-
-    # =========================
-    # 🛒 BUY NUMBER
-    # =========================
-    elif call.data == "buy_number":
-        await call.message.edit_text(
-            "🌍 选择国家",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🇦🇪 UAE - 2.85$", callback_data="buy_uae")],
-                [InlineKeyboardButton(text="🇵🇭 Philippines - 0.79$", callback_data="buy_ph")],
-                [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
-            ])
-        )
-
-    # =========================
-    # BACK
-    # =========================
-    elif call.data == "back":
-        user = await get_user(user_id)
-
-        await call.message.edit_text(
-            f"💎 VIP 系统\n\n💰 余额: {user['balance']} USDT",
-            reply_markup=main_menu()
+            f"👤 用户\n💰 {user['balance']} USDT",
+            reply_markup=menu()
         )
 
 
-# =========================
-# FALLBACK
-# =========================
 @dp.message()
 async def fallback(msg: types.Message):
-    await msg.answer("⚡ 系统运行中...")
+    await msg.answer("⚡ OK")
