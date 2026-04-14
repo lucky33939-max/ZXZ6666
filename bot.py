@@ -1,10 +1,13 @@
-from aiogram import Dispatcher, types
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+from config import BOT_TOKEN
 from db import get_user, create_order
 from payment import create_invoice
 
+# ✅ FIX: tạo bot
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
@@ -52,9 +55,7 @@ async def cb(call: types.CallbackQuery):
 
     user_id = call.from_user.id
 
-    # =========================
     # ⭐ STARS
-    # =========================
     if call.data == "stars":
         await call.message.edit_text(
             "⭐ 选择星星套餐",
@@ -74,18 +75,14 @@ async def cb(call: types.CallbackQuery):
     elif call.data.startswith("buy_star"):
         amount = int(call.data.split("_")[-1])
 
-        # ✅ CREATE ORDER
         order_id = await create_order(user_id, amount, "stars")
-
         link = await create_invoice(order_id, amount)
 
         await call.message.answer(
             f"💳 订单 #{order_id}\n\n点击支付👇\n{link}"
         )
 
-    # =========================
     # 💰 TOPUP
-    # =========================
     elif call.data == "topup":
         await call.message.edit_text(
             "💰 选择充值金额",
@@ -109,18 +106,14 @@ async def cb(call: types.CallbackQuery):
     elif call.data.startswith("top_"):
         amount = int(call.data.split("_")[1])
 
-        # ✅ CREATE ORDER
         order_id = await create_order(user_id, amount, "topup")
-
         link = await create_invoice(order_id, amount)
 
         await call.message.answer(
             f"💰 充值订单 #{order_id}\n\n👉 {link}"
         )
 
-    # =========================
     # 👤 PROFILE
-    # =========================
     elif call.data == "profile":
         user = await get_user(user_id)
 
@@ -129,9 +122,7 @@ async def cb(call: types.CallbackQuery):
             reply_markup=main_menu()
         )
 
-    # =========================
     # 📦 RENT
-    # =========================
     elif call.data == "rent":
         await call.message.edit_text(
             "📦 可租号码",
@@ -142,9 +133,7 @@ async def cb(call: types.CallbackQuery):
             ])
         )
 
-    # =========================
     # 🛒 BUY NUMBER
-    # =========================
     elif call.data == "buy_number":
         await call.message.edit_text(
             "🌍 选择国家",
@@ -155,9 +144,7 @@ async def cb(call: types.CallbackQuery):
             ])
         )
 
-    # =========================
     # BACK
-    # =========================
     elif call.data == "back":
         user = await get_user(user_id)
 
@@ -173,13 +160,3 @@ async def cb(call: types.CallbackQuery):
 @dp.message()
 async def fallback(msg: types.Message):
     await msg.answer("⚡ 系统运行中...")
-
-# =========================
-# RUN
-# =========================
-async def main():
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
