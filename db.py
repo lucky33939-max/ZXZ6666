@@ -3,6 +3,7 @@ from config import DATABASE_URL
 
 db_pool = None
 
+
 async def init_db():
     global db_pool
 
@@ -10,7 +11,6 @@ async def init_db():
 
     async with db_pool.acquire() as conn:
 
-        # USERS
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id BIGINT PRIMARY KEY,
@@ -21,7 +21,6 @@ async def init_db():
         );
         """)
 
-        # ORDERS
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id SERIAL PRIMARY KEY,
@@ -32,20 +31,18 @@ async def init_db():
         );
         """)
 
-        # NUMBERS
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS numbers (
             id SERIAL PRIMARY KEY,
             number TEXT,
             status TEXT DEFAULT 'free',
-            price_1m INT,
-            price_3m INT,
+            price_1m INT DEFAULT 99,
+            price_3m INT DEFAULT 268,
             locked_by BIGINT,
             locked_until TIMESTAMP
         );
         """)
 
-        # ACCOUNTS
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS accounts (
             id SERIAL PRIMARY KEY,
