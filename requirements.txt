@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-aiogram
+aiogram==3.*
 asyncpg
 httpx
 python-dotenv
