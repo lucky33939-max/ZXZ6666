@@ -13,6 +13,6 @@ async def create_invoice(order_id, price):
         "order_id": str(order_id)
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=15) as client:
         res = await client.post(API, json=data, headers=headers)
         return res.json()["invoice_url"]
