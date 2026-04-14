@@ -12,14 +12,11 @@ async def root():
     return {"ok": True}
 
 
-@app.post("/")
+@app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
-
-    asyncio.create_task(dp.feed_raw_update(bot, data))  # FIX LAG
-
+    asyncio.create_task(dp.feed_raw_update(bot, data))
     return {"ok": True}
-
 
 async def unlock_worker():
     while True:
