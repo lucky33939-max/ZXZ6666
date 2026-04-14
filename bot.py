@@ -3,8 +3,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import BOT_TOKEN
-from db import get_user
-from db import get_pool
+from db import get_user, get_pool
 from payment import create_invoice
 
 bot = Bot(token=BOT_TOKEN)
