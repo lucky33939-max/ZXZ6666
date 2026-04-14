@@ -12,14 +12,15 @@ async def root():
     return {"ok": True}
 
 
+# 🔥 TELEGRAM WEBHOOK (NO LAG)
 @app.post("/")
 async def webhook(request: Request):
     data = await request.json()
-    asyncio.create_task(dp.feed_raw_update(bot, data))
+    await dp.feed_raw_update(bot, data)
     return {"ok": True}
 
 
-# 💸 PAYMENT + DELIVERY + REF
+# 💸 PAYMENT + AUTO DELIVERY + REF
 @app.post("/payment-hook")
 async def payment(request: Request):
     data = await request.json()
@@ -50,7 +51,7 @@ async def payment(request: Request):
                 row["amount"], row["user_id"]
             )
 
-            # 💸 REF COMMISSION
+            # 💸 REF
             ref = await conn.fetchval(
                 "SELECT ref_by FROM users WHERE id=$1",
                 row["user_id"]
@@ -63,7 +64,7 @@ async def payment(request: Request):
                     commission, ref
                 )
 
-            # 🎯 AUTO ACCOUNT DELIVERY
+            # 🎯 AUTO DELIVERY
             acc = await conn.fetchrow("""
             SELECT * FROM accounts
             WHERE status='free'
@@ -90,7 +91,7 @@ async def payment(request: Request):
             else:
                 await bot.send_message(
                     row["user_id"],
-                    "⚠️ 暂无账号库存，请联系客服"
+                    "⚠️ 暂无库存，请联系客服"
                 )
 
     return {"ok": True}
