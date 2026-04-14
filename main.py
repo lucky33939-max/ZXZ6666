@@ -12,12 +12,18 @@ async def root():
     return {"ok": True}
 
 
+# 🔥 TELEGRAM WEBHOOK
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
+
+    # ⚡ chống lag + timeout
     asyncio.create_task(dp.feed_raw_update(bot, data))
+
     return {"ok": True}
 
+
+# 🔓 AUTO UNLOCK
 async def unlock_worker():
     while True:
         pool = get_pool()
@@ -32,7 +38,9 @@ async def unlock_worker():
         await asyncio.sleep(30)
 
 
+# 🚀 STARTUP
 @app.on_event("startup")
 async def startup():
     await init_db()
     asyncio.create_task(unlock_worker())
+    print("✅ SYSTEM READY")
