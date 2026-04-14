@@ -6,21 +6,29 @@ import asyncpg
 
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types, Router
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 # ===== CONFIG =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
 app = FastAPI()
 db = None
+
+user_lock = {}
 
 # ================= DB =================
 async def init_db():
@@ -61,27 +69,28 @@ def main_menu():
             [types.KeyboardButton(text="💎 开通会员"), types.KeyboardButton(text="✨ 购买星星")],
             [types.KeyboardButton(text="👑 靓号市场"), types.KeyboardButton(text="🔥 888靓号")],
             [types.KeyboardButton(text="💰 余额充值"), types.KeyboardButton(text="👤 个人中心")],
-            [types.KeyboardButton(text="👨‍💻 客服")]
+            [types.KeyboardButton(text="📦 我的订单"), types.KeyboardButton(text="👨‍💻 客服")]
         ],
         resize_keyboard=True
     )
 
 # ================= USER =================
-async def get_or_create_user(user_id):
+async def get_user(user_id):
     user = await db.fetchrow("SELECT * FROM users WHERE telegram_id=$1", user_id)
     if not user:
         await db.execute("INSERT INTO users(telegram_id) VALUES($1)", user_id)
+        user = await db.fetchrow("SELECT * FROM users WHERE telegram_id=$1", user_id)
     return user
 
 # ================= START =================
 @router.message(lambda msg: msg.text == "/start")
 async def start(msg: types.Message):
-    await get_or_create_user(msg.from_user.id)
+    await get_user(msg.from_user.id)
 
     await msg.answer("""
 <b>🚀 欢迎使用系统</b>
 
-⚡ 高效 · 稳定 · 自动化
+⚡ 自动化交易系统
 """, reply_markup=main_menu())
 
 # ================= STARS =================
@@ -95,91 +104,50 @@ async def stars(msg: types.Message):
     ])
     await msg.answer("✨ <b>请选择套餐</b>", reply_markup=kb)
 
-# ================= VIP =================
-@router.message(lambda msg: msg.text == "💎 开通会员")
-async def vip(msg: types.Message):
-    await msg.answer("""
-💎 <b>会员套餐</b>
-
-3个月 = 15U  
-6个月 = 20U  
-1年 = 36U  
-""")
-
-# ================= NUMBERS =================
-@router.message(lambda msg: msg.text == "👑 靓号市场")
-async def numbers(msg: types.Message):
-    view = random.randint(50, 200)
-    sold = random.randint(100, 500)
-
-    await msg.answer(f"""
-👑 <b>靓号市场</b>
-
-🇬🇧 +44 → 70U  
-🇺🇸 +1 → 75U  
-
-🔥 在线: {view}
-💰 成交: {sold}
-""")
-
-# ================= 888 =================
-@router.message(lambda msg: msg.text == "🔥 888靓号")
-async def rent(msg: types.Message):
-    await msg.answer("""
-🔥 <b>888靓号</b>
-
-1个月 = 99U  
-3个月 = 268U  
-
-⚠️ 数量有限
-""")
-
-# ================= PROFILE =================
-@router.message(lambda msg: msg.text == "👤 个人中心")
-async def profile(msg: types.Message):
-    user = await db.fetchrow("SELECT * FROM users WHERE telegram_id=$1", msg.from_user.id)
-
-    await msg.answer(f"""
-👤 <b>个人中心</b>
-
-ID: {msg.from_user.id}
-余额: {user['balance']} USDT
-状态: 正常
-""")
-
-# ================= TOPUP =================
-@router.message(lambda msg: msg.text == "💰 余额充值")
-async def topup(msg: types.Message):
-    await msg.answer("""
-💰 <b>充值</b>
-
-10U | 50U | 100U  
-200U | 500U
-""")
-
-# ================= ORDER =================
+# ================= CREATE ORDER =================
 async def create_order(user_id, product, price):
     row = await db.fetchrow("""
         INSERT INTO orders(user_id, product, price, status)
         VALUES($1,$2,$3,'pending')
         RETURNING id
     """, user_id, product, price)
-
     return row["id"]
 
 # ================= CALLBACK =================
 @router.callback_query(lambda c: c.data.startswith("star"))
 async def buy(call: types.CallbackQuery):
+
+    if call.from_user.id in user_lock:
+        await call.answer("⚠️ 操作太快", show_alert=True)
+        return
+
+    user_lock[call.from_user.id] = True
+
     await call.answer()
 
-    amount = int(call.data.split("_")[1])
+    try:
+        amount = int(call.data.split("_")[1])
+        price_map = {50:1, 100:2, 200:3, 500:6}
+        price = price_map.get(amount, amount)
 
-    price_map = {50:1, 100:2, 200:3, 500:6}
-    price = price_map.get(amount, amount)
+        user = await get_user(call.from_user.id)
 
-    order_id = await create_order(call.from_user.id, f"STAR {amount}", price)
+        # ===== BALANCE PAY =====
+        if user["balance"] >= price:
+            await db.execute("""
+            UPDATE users SET balance = balance - $1
+            WHERE telegram_id=$2
+            """, price, call.from_user.id)
 
-    await call.message.answer(f"""
+            await call.message.answer("✅ 支付成功（余额）")
+
+            await call.message.answer(f"📦 ⭐ {amount} 已到账")
+            return
+
+        # ===== CREATE ORDER =====
+        order_id = await create_order(call.from_user.id, f"STAR {amount}", price)
+
+        await call.message.answer(f"""
 🧾 <b>订单 #{order_id}</b>
 
 ⭐ 数量: {amount}
@@ -188,10 +156,46 @@ async def buy(call: types.CallbackQuery):
 ━━━━━━━━━━━━━━━
 💳 地址(TRC20):
 
-TXXXXXXX
+<code>TXXXXXXX</code>
 
 ⏳ 状态: 等待支付
 """)
+
+        # ===== ADMIN ALERT =====
+        if ADMIN_ID:
+            await bot.send_message(ADMIN_ID, f"💰 新订单 #{order_id} - {price}U")
+
+    except Exception as e:
+        print("❌ ERROR:", e)
+
+    finally:
+        del user_lock[call.from_user.id]
+
+# ================= PROFILE =================
+@router.message(lambda msg: msg.text == "👤 个人中心")
+async def profile(msg: types.Message):
+    user = await get_user(msg.from_user.id)
+
+    await msg.answer(f"""
+👤 <b>个人中心</b>
+
+🆔 {msg.from_user.id}
+💰 余额: {user['balance']} USDT
+""")
+
+# ================= ORDERS =================
+@router.message(lambda msg: msg.text == "📦 我的订单")
+async def orders(msg: types.Message):
+    rows = await db.fetch("""
+    SELECT * FROM orders WHERE user_id=$1 ORDER BY id DESC LIMIT 5
+    """, msg.from_user.id)
+
+    text = "📦 <b>最近订单</b>\n\n"
+
+    for r in rows:
+        text += f"#{r['id']} - {r['status']} - {r['price']}U\n"
+
+    await msg.answer(text)
 
 # ================= WEBHOOK =================
 @app.post("/{token}")
@@ -200,7 +204,7 @@ async def webhook(token: str, request: Request):
         return {"ok": False}
 
     data = await request.json()
-    logging.info(f"🔥 UPDATE: {data}")
+    logging.info(f"🔥 UPDATE")
 
     update = types.Update(**data)
 
