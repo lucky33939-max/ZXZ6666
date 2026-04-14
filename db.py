@@ -1,4 +1,5 @@
 import asyncpg
+from decimal import Decimal
 
 DB_CONFIG = {
     "user": "postgres",
@@ -63,11 +64,14 @@ async def create_tables():
             reference_id BIGINT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        """)
 
+        CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
+        CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
+        """)
+        
 
 # =========================
-# CREATE USER (FIX LỖI IMPORT)
+# CREATE USER
 # =========================
 async def create_user(user_id: int):
     pool = get_pool()
@@ -102,7 +106,12 @@ async def get_user(user_id: int):
                 user_id
             )
 
-        return dict(user)
+        data = dict(user)
+
+        # ✅ convert Decimal → float
+        data["balance"] = float(data["balance"])
+
+        return data
 
 
 # =========================
@@ -112,6 +121,13 @@ async def create_order(user_id: int, amount: float, order_type: str):
     pool = get_pool()
 
     async with pool.acquire() as conn:
+
+        # đảm bảo user tồn tại
+        await conn.execute(
+            "INSERT INTO users(id, balance) VALUES($1, 0) ON CONFLICT DO NOTHING",
+            user_id
+        )
+
         order_id = await conn.fetchval(
             "INSERT INTO orders(user_id, amount, type) VALUES($1,$2,$3) RETURNING id",
             user_id, amount, order_type
@@ -121,15 +137,17 @@ async def create_order(user_id: int, amount: float, order_type: str):
 
 
 # =========================
-# MARK ORDER PAID + ADD BALANCE
+# MARK ORDER PAID (SAFE)
 # =========================
 async def mark_order_paid(order_id: int):
     pool = get_pool()
 
     async with pool.acquire() as conn:
         async with conn.transaction():
+
+            # 🔥 LOCK chống double payment
             order = await conn.fetchrow(
-                "SELECT * FROM orders WHERE id=$1",
+                "SELECT * FROM orders WHERE id=$1 FOR UPDATE",
                 order_id
             )
 
@@ -139,6 +157,9 @@ async def mark_order_paid(order_id: int):
             if order["status"] == "paid":
                 return order
 
+            amount = float(order["amount"])
+            user_id = order["user_id"]
+
             await conn.execute(
                 "UPDATE orders SET status='paid' WHERE id=$1",
                 order_id
@@ -146,12 +167,15 @@ async def mark_order_paid(order_id: int):
 
             await conn.execute(
                 "UPDATE users SET balance = balance + $1 WHERE id=$2",
-                order["amount"], order["user_id"]
+                amount, user_id
             )
 
             await conn.execute("""
                 INSERT INTO transactions(user_id, amount, type, source, reference_id)
                 VALUES($1,$2,'credit','order',$3)
-            """, order["user_id"], order["amount"], order_id)
+            """, user_id, amount, order_id)
 
-            return order
+            return {
+                "user_id": user_id,
+                "amount": amount
+            }
