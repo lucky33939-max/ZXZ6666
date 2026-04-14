@@ -22,11 +22,10 @@ async def root():
 async def webhook(request: Request):
     data = await request.json()
 
-    # ⚡ xử lý trực tiếp → không lag
-    await dp.feed_raw_update(bot, data)
+    # 🔥 chống lag + timeout
+    asyncio.create_task(dp.feed_raw_update(bot, data))
 
     return {"ok": True}
-
 
 # =========================
 # PAYMENT WEBHOOK
