@@ -9,11 +9,10 @@ async def init_db():
 
     async with db_pool.acquire() as conn:
         await conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id BIGINT PRIMARY KEY,
-            balance FLOAT DEFAULT 0
-        );
-        """)
+       CREATE TABLE IF NOT EXISTS users (
+    id BIGINT PRIMARY KEY,
+    balance FLOAT DEFAULT 0
+);
 
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS orders (
