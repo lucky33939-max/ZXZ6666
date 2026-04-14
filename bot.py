@@ -1,7 +1,55 @@
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.client.default import DefaultBotProperties
+
+from config import BOT_TOKEN, ADMIN_ID
+from db import get_user, get_pool
+
+import random
+
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
+
+dp = Dispatcher()
+
+
+# =========================
+# MENU
+# =========================
+def menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 888号码", callback_data="rent")],
+        [InlineKeyboardButton(text="🌍 全球号码", callback_data="market")],
+        [InlineKeyboardButton(text="👤 个人中心", callback_data="profile")]
+    ])
+
+
+# =========================
+# START
+# =========================
+@dp.message(Command("start"))
+async def start(msg: types.Message):
+    user = await get_user(msg.from_user.id)
+
+    await msg.answer(f"""
+💎 <b>VIP系统</b>
+
+👤 ID: <code>{msg.from_user.id}</code>
+💰 余额: <b>{user['balance']} USDT</b>
+
+🔥 在线: {random.randint(100,300)}
+""", reply_markup=menu())
+
+
+# =========================
+# CALLBACK
+# =========================
 @dp.callback_query()
 async def cb(call: types.CallbackQuery):
 
-    # 🔥 FIX timeout
     try:
         await call.answer()
     except:
@@ -11,7 +59,7 @@ async def cb(call: types.CallbackQuery):
     pool = get_pool()
 
     # =========================
-    # 🏠 HOME
+    # HOME
     # =========================
     if call.data == "back":
         user = await get_user(user_id)
@@ -21,34 +69,34 @@ async def cb(call: types.CallbackQuery):
         )
 
     # =========================
-    # 🌍 MARKET
+    # MARKET
     # =========================
-    elif call.data == "country":
-
+    elif call.data == "market":
         await call.message.edit_text("""
 🌍 <b>全球号码市场</b>
 
 🇺🇸 USA  
 🇬🇧 UK  
-💎 888专区  
+💎 888专区
 """, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💎 888专区", callback_data="rent")],
             [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
         ]))
 
     # =========================
-    # 📦 LIST
+    # LIST 888
     # =========================
     elif call.data == "rent":
 
         async with pool.acquire() as conn:
             rows = await conn.fetch("SELECT * FROM numbers LIMIT 10")
 
-        text = "📦 <b>号码列表</b>\n\n"
+        text = "📦 <b>888号码列表</b>\n━━━━━━━━━━━━━━\n\n"
         keyboard = []
 
         for r in rows:
-            text += f"🟢 <code>{r['number']}</code>\n"
+            status = "🟢" if r["status"] == "free" else "🔴"
+            text += f"{status} <code>{r['number']}</code>\n"
 
             keyboard.append([
                 InlineKeyboardButton(
@@ -65,7 +113,7 @@ async def cb(call: types.CallbackQuery):
         )
 
     # =========================
-    # 🔒 LOCK
+    # LOCK
     # =========================
     elif call.data.startswith("select_"):
 
@@ -89,25 +137,20 @@ async def cb(call: types.CallbackQuery):
             WHERE id=$2
             """, user_id, num_id)
 
-        # 💎 invoice UI
         await call.message.edit_text(f"""
-💳 <b>订单确认</b>
+🔒 <b>已锁定</b>
 
-━━━━━━━━━━━━━━
 📞 <code>{row['number']}</code>
-💰 1个月: {row['price_1m']}U
-💰 3个月: {row['price_3m']}U
-━━━━━━━━━━━━━━
 
-⏳ 请在5分钟内付款
+⏳ 5分钟内完成支付
 """, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 1个月", callback_data=f"pay1_{num_id}")],
-            [InlineKeyboardButton(text="💳 3个月", callback_data=f"pay3_{num_id}")],
+            [InlineKeyboardButton(text="💳 1个月 99U", callback_data=f"pay1_{num_id}")],
+            [InlineKeyboardButton(text="💳 3个月 268U", callback_data=f"pay3_{num_id}")],
             [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
         ]))
 
     # =========================
-    # 💳 CREATE ORDER + INVOICE
+    # CREATE ORDER
     # =========================
     elif call.data.startswith("pay"):
 
@@ -121,7 +164,7 @@ async def cb(call: types.CallbackQuery):
                 user_id, amount
             )
 
-        # 💎 HOÁ ĐƠN XỊN
+        # 💎 INVOICE
         await call.message.edit_text(f"""
 💳 <b>订单已创建</b>
 
@@ -130,21 +173,21 @@ async def cb(call: types.CallbackQuery):
 💰 <b>{amount} USDT</b>
 ━━━━━━━━━━━━━━
 
-📥 请转账并提交凭证
+📤 请付款后上传凭证
 """, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📤 上传凭证", callback_data=f"upload_{order_id}")],
             [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
         ]))
 
-        # 👨‍💼 gửi admin
+        # ADMIN
         await bot.send_message(
             ADMIN_ID,
             f"""
-🆕 订单通知
+🆕 新订单
 
 🆔 {order_id}
-👤 用户: {user_id}
-💰 金额: {amount}U
+👤 {user_id}
+💰 {amount}U
 """,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
@@ -155,7 +198,7 @@ async def cb(call: types.CallbackQuery):
         )
 
     # =========================
-    # 👨‍💼 ADMIN CONFIRM
+    # ADMIN CONFIRM
     # =========================
     elif call.data.startswith("confirm_"):
 
@@ -199,3 +242,8 @@ async def cb(call: types.CallbackQuery):
 
     elif call.data.startswith("reject_"):
         await call.message.edit_text("❌ 未收款")
+
+
+@dp.message()
+async def fallback(msg: types.Message):
+    await msg.answer("⚡ 系统正常运行")
