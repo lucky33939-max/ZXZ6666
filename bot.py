@@ -65,9 +65,11 @@ def back_kb():
 # =========================
 async def get_or_create_user(user_id: int):
     user = await get_user(user_id)
-    if not user:
-        user = await create_user(user_id)
-    return user
+   if not user:
+    await conn.execute(
+        "INSERT INTO users(id, balance) VALUES($1, 0)",
+        user_id
+    )
 
 
 async def create_order(pool, user_id: int, amount: int):
