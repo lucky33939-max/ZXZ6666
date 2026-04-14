@@ -29,9 +29,7 @@ async def get_user(user_id):
         user = await conn.fetchrow("SELECT * FROM users WHERE id=$1", user_id)
 
         if not user:
-            await conn.execute(
-                "INSERT INTO users(id) VALUES($1)", user_id
-            )
+            await conn.execute("INSERT INTO users(id) VALUES($1)", user_id)
             return {"balance": 0}
 
         return dict(user)
