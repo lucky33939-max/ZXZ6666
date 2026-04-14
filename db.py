@@ -3,35 +3,56 @@ from config import DATABASE_URL
 
 db_pool = None
 
+
+# =========================
+# INIT DB
+# =========================
 async def init_db():
     global db_pool
-    db_pool = await asyncpg.create_pool(DATABASE_URL)
+
+    db_pool = await asyncpg.create_pool(
+        DATABASE_URL,
+        min_size=1,
+        max_size=5
+    )
 
     async with db_pool.acquire() as conn:
-        await conn.execute("""
-       CREATE TABLE IF NOT EXISTS users (
-    id BIGINT PRIMARY KEY,
-    balance FLOAT DEFAULT 0
-);
 
+        # USERS
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id BIGINT PRIMARY KEY,
+            balance NUMERIC DEFAULT 0
+        );
+        """)
+
+        # ORDERS
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
-            amount FLOAT,
+            amount NUMERIC,
             status TEXT DEFAULT 'pending'
         );
         """)
 
-async def get_user(user_id):
+    return db_pool
+
+
+# =========================
+# GET USER
+# =========================
+async def get_user(user_id: int):
     async with db_pool.acquire() as conn:
         user = await conn.fetchrow(
-            "SELECT * FROM users WHERE id=$1", user_id
+            "SELECT * FROM users WHERE id=$1",
+            user_id
         )
 
         if not user:
             await conn.execute(
-                "INSERT INTO users(id) VALUES($1)", user_id
+                "INSERT INTO users(id, balance) VALUES($1, 0)",
+                user_id
             )
             return {"balance": 0}
 
