@@ -1,5 +1,4 @@
 import asyncpg
-import asyncio
 
 DB_CONFIG = {
     "user": "postgres",
@@ -13,7 +12,7 @@ _pool = None
 
 
 # =========================
-# INIT POOL
+# INIT DB
 # =========================
 async def init_db():
     global _pool
@@ -68,7 +67,20 @@ async def create_tables():
 
 
 # =========================
-# USER FUNCTIONS
+# CREATE USER (FIX LỖI IMPORT)
+# =========================
+async def create_user(user_id: int):
+    pool = get_pool()
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO users(id, balance) VALUES($1, 0) ON CONFLICT DO NOTHING",
+            user_id
+        )
+
+
+# =========================
+# GET USER (AUTO CREATE)
 # =========================
 async def get_user(user_id: int):
     pool = get_pool()
@@ -90,52 +102,56 @@ async def get_user(user_id: int):
                 user_id
             )
 
-        # 🔥 QUAN TRỌNG: luôn return dict
         return dict(user)
 
+
 # =========================
-# BALANCE UPDATE
+# CREATE ORDER
 # =========================
-async def add_balance(user_id: int, amount: float, order_id: int):
+async def create_order(user_id: int, amount: float, order_type: str):
     pool = get_pool()
 
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            await conn.execute(
-                "UPDATE users SET balance = balance + $1 WHERE id=$2",
-                amount, user_id
-            )
+        order_id = await conn.fetchval(
+            "INSERT INTO orders(user_id, amount, type) VALUES($1,$2,$3) RETURNING id",
+            user_id, amount, order_type
+        )
 
-            await conn.execute("""
-                INSERT INTO transactions(user_id, amount, type, source, reference_id)
-                VALUES($1,$2,'credit','order',$3)
-            """, user_id, amount, order_id)
+        return order_id
 
 
 # =========================
-# ORDER UPDATE (PAYMENT SUCCESS)
+# MARK ORDER PAID + ADD BALANCE
 # =========================
 async def mark_order_paid(order_id: int):
     pool = get_pool()
 
     async with pool.acquire() as conn:
-        order = await conn.fetchrow(
-            "SELECT * FROM orders WHERE id=$1",
-            order_id
-        )
+        async with conn.transaction():
+            order = await conn.fetchrow(
+                "SELECT * FROM orders WHERE id=$1",
+                order_id
+            )
 
-        if not order:
-            return None
+            if not order:
+                return None
 
-        if order["status"] == "paid":
+            if order["status"] == "paid":
+                return order
+
+            await conn.execute(
+                "UPDATE orders SET status='paid' WHERE id=$1",
+                order_id
+            )
+
+            await conn.execute(
+                "UPDATE users SET balance = balance + $1 WHERE id=$2",
+                order["amount"], order["user_id"]
+            )
+
+            await conn.execute("""
+                INSERT INTO transactions(user_id, amount, type, source, reference_id)
+                VALUES($1,$2,'credit','order',$3)
+            """, order["user_id"], order["amount"], order_id)
+
             return order
-
-        await conn.execute(
-            "UPDATE orders SET status='paid' WHERE id=$1",
-            order_id
-        )
-
-        # ADD BALANCE
-        await add_balance(order["user_id"], float(order["amount"]), order_id)
-
-        return order
