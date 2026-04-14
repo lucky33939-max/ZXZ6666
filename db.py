@@ -70,15 +70,15 @@ async def create_tables():
 # =========================
 # USER FUNCTIONS
 # =========================
-async def get_user(user_id: int):
+async def create_user(user_id: int):
     pool = get_pool()
 
     async with pool.acquire() as conn:
-        user = await conn.fetchrow(
-            "SELECT * FROM users WHERE id=$1",
+        await conn.execute(
+            "INSERT INTO users(id, balance) VALUES($1, 0) ON CONFLICT DO NOTHING",
             user_id
         )
-
+        
         # AUTO CREATE USER
         if not user:
             await conn.execute(
