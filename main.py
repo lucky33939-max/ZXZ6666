@@ -28,10 +28,14 @@ async def root():
 async def telegram_webhook(request: Request):
     try:
         data = await request.json()
+
+        # chạy async không block
         asyncio.create_task(dp.feed_raw_update(bot, data))
+
         return {"ok": True}
-    except Exception as e:
-        logging.exception("Webhook error")
+
+    except Exception:
+        logging.exception("Telegram webhook error")
         raise HTTPException(500, "Webhook failed")
 
 
@@ -40,57 +44,76 @@ async def telegram_webhook(request: Request):
 # =========================
 @app.post("/payment-hook")
 async def payment_hook(request: Request):
-    data = await request.json()
+    try:
+        data = await request.json()
 
-    # ❗ validate basic payload
-    if data.get("payment_status") != "finished":
+        logging.info(f"Payment hook: {data}")
+
+        # ✅ validate status
+        if data.get("payment_status") != "finished":
+            return {"ok": True}
+
+        order_id = data.get("order_id")
+        if not order_id:
+            raise HTTPException(400, "Missing order_id")
+
+        order_id = int(order_id)
+
+        # ✅ FIX: không dùng await
+        pool = get_pool()
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+
+                # 🔥 LOCK chống double payment
+                row = await conn.fetchrow(
+                    "SELECT * FROM orders WHERE id=$1 FOR UPDATE",
+                    order_id
+                )
+
+                if not row:
+                    raise HTTPException(404, "Order not found")
+
+                if row["status"] == "paid":
+                    logging.warning(f"Duplicate payment: {order_id}")
+                    return {"ok": True}
+
+                # update order
+                await conn.execute(
+                    "UPDATE orders SET status='paid' WHERE id=$1",
+                    order_id
+                )
+
+                # update balance
+                await conn.execute(
+                    "UPDATE users SET balance = balance + $1 WHERE id=$2",
+                    row["amount"], row["user_id"]
+                )
+
+                # log transaction (VERY IMPORTANT)
+                await conn.execute("""
+                    INSERT INTO transactions(user_id, amount, type, source, reference_id)
+                    VALUES($1,$2,'credit','order',$3)
+                """, row["user_id"], row["amount"], order_id)
+
+        # ✅ gửi message sau transaction
+        try:
+            await bot.send_message(
+                row["user_id"],
+                f"💎 Thanh toán thành công\n\n"
+                f"🧾 Đơn #{order_id}\n"
+                f"💰 +{row['amount']} USDT"
+            )
+        except Exception:
+            logging.exception("Send message failed")
+
         return {"ok": True}
 
-    if "order_id" not in data:
-        raise HTTPException(400, "Missing order_id")
-
-    order_id = int(data["order_id"])
-
-    pool = await get_pool()
-
-    async with pool.acquire() as conn:
-        async with conn.transaction():  # 🔥 chống double payment
-            row = await conn.fetchrow(
-                "SELECT * FROM orders WHERE id=$1 FOR UPDATE",
-                order_id
-            )
-
-            if not row:
-                raise HTTPException(404, "Order not found")
-
-            if row["status"] == "paid":
-                logging.warning(f"Duplicate payment: {order_id}")
-                return {"ok": True}
-
-            # update order
-            await conn.execute(
-                "UPDATE orders SET status='paid' WHERE id=$1",
-                order_id
-            )
-
-            # update balance
-            await conn.execute(
-                "UPDATE users SET balance = balance + $1 WHERE id=$2",
-                row["amount"], row["user_id"]
-            )
-
-    # send message outside transaction
-    try:
-        await bot.send_message(
-            row["user_id"],
-            f"💎 Thanh toán thành công\n\n"
-            f"🧾 Đơn #{order_id}\n"
-            f"💰 +{row['amount']} USDT"
-        )
+    except HTTPException:
+        raise
     except Exception:
-        logging.exception("Send message failed")
-
-    return {"ok": True}
+        logging.exception("Payment hook error")
+        raise HTTPException(500, "Internal error")
 
 
 # =========================
@@ -117,8 +140,8 @@ async def ping():
 # =========================
 # STARTUP
 # =========================
-
 @app.on_event("startup")
 async def startup():
     await init_db()
     await create_tables()
+    logging.info("✅ DB ready")
