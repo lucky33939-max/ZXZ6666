@@ -1,64 +1,73 @@
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.client.default import DefaultBotProperties
 
 from config import BOT_TOKEN
 from db import get_user, get_pool
 from payment import create_invoice
 
 import random
+from datetime import datetime, timedelta
 
-bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
+
 dp = Dispatcher()
 
-
 # =========================
-# MENU GRID
+# MENU
 # =========================
 def menu():
     return InlineKeyboardMarkup(inline_keyboard=[
 
         [
-            InlineKeyboardButton(text="💎 VIP会员", callback_data="vip"),
-            InlineKeyboardButton(text="⭐ 星星充值", callback_data="stars")
-        ],
-
-        [
-            InlineKeyboardButton(text="📦 租号码", callback_data="rent"),
-            InlineKeyboardButton(text="🛒 买号码", callback_data="buy")
+            InlineKeyboardButton(text="📦 租赁888号码", callback_data="rent"),
+            InlineKeyboardButton(text="🌍 国际号码", callback_data="buy")
         ],
 
         [
             InlineKeyboardButton(text="💰 余额充值", callback_data="topup"),
             InlineKeyboardButton(text="👤 个人中心", callback_data="profile")
-        ],
-
-        [
-            InlineKeyboardButton(text="🔥 热门专区", callback_data="hot"),
-            InlineKeyboardButton(text="🎁 礼物商城", callback_data="gift")
         ]
     ])
 
 
 # =========================
-# START (CARD STYLE)
+# START + REF
 # =========================
 @dp.message(Command("start"))
 async def start(msg: types.Message):
+
+    args = msg.text.split()
+
+    ref = None
+    if len(args) > 1:
+        try:
+            ref = int(args[1])
+        except:
+            pass
+
     user = await get_user(msg.from_user.id)
 
+    if ref and ref != msg.from_user.id:
+        async with get_pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE users SET ref_by=$1 WHERE id=$2",
+                ref, msg.from_user.id
+            )
+
     text = (
-        "💎 <b>VIP BANK SYSTEM</b>\n\n"
-        f"👤 用户: {msg.from_user.id}\n"
+        "💎 <b>VIP 系统</b>\n\n"
+        f"👤 用户ID: {msg.from_user.id}\n"
         f"💰 余额: {user['balance']} USDT\n\n"
         "━━━━━━━━━━━━━━\n"
         f"🔥 在线: {random.randint(50,150)}\n"
-        f"💸 今日成交: {random.randint(500,3000)}U\n"
-        "━━━━━━━━━━━━━━\n"
-        "⚡ 自动系统 · 秒到账"
+        "━━━━━━━━━━━━━━"
     )
 
-    # ✅ ALWAYS SAFE
     await msg.answer(text, reply_markup=menu())
 
 
@@ -67,102 +76,441 @@ async def start(msg: types.Message):
 # =========================
 @dp.callback_query()
 async def cb(call: types.CallbackQuery):
-    await call.answer("⚡ 加载中...")
+    await call.answer("⚡")
 
     user_id = call.from_user.id
     pool = get_pool()
 
-    # ⭐ STARS
-    if call.data == "stars":
+    # =========================
+    # 📦 888 LIST
+    # =========================
+    if call.data == "rent":
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM numbers LIMIT 10")
+
+        keyboard = []
+
+        for r in rows:
+
+            if r["status"] == "free":
+                status = "🟢 空闲"
+            elif r["status"] == "locked":
+                status = "🟡 已锁定"
+            else:
+                status = "🔴 已售"
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{status} {r['number']}",
+                    callback_data=f"select_{r['id']}"
+                )
+            ])
+
+        keyboard.append([InlineKeyboardButton(text="🔙 返回", callback_data="back")])
+
         await call.message.edit_text(
-            "⭐ <b>选择套餐</b>",
+            "📦 <b>888号码列表</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        )
+
+    # =========================
+    # 🔒 LOCK NUMBER
+    # =========================
+    elif call.data.startswith("select_"):
+
+        num_id = int(call.data.split("_")[1])
+
+        async with pool.acquire() as conn:
+
+            count = await conn.fetchval("""
+            SELECT COUNT(*) FROM numbers
+            WHERE locked_by=$1 AND status='locked'
+            """, user_id)
+
+            if count >= 2:
+                await call.answer("⚠️ 已锁定太多号码")
+                return
+
+            row = await conn.fetchrow(
+                "SELECT * FROM numbers WHERE id=$1",
+                num_id
+            )
+
+            if row["status"] == "locked":
+                await call.answer("⚠️ 已被占用")
+                return
+
+            vip = await conn.fetchval(
+                "SELECT vip FROM users WHERE id=$1",
+                user_id
+            )
+
+            minutes = 10 if vip else 5
+
+            await conn.execute("""
+            UPDATE numbers
+            SET status='locked',
+                locked_by=$1,
+                locked_until=NOW() + ($2 || ' minutes')::interval
+            WHERE id=$3
+            """, user_id, minutes, num_id)
+
+        await call.message.answer(
+            f"""
+🔒 已锁定号码
+
+📞 {row['number']}
+
+⏳ 请在 {minutes} 分钟内支付
+
+💰 价格:
+1个月 → 99U  
+3个月 → 268U
+""",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="50⭐ = 1$", callback_data="buy_1"),
-                    InlineKeyboardButton(text="100⭐ = 2$", callback_data="buy_2")
-                ],
-                [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
+                    InlineKeyboardButton(text="1个月 99U", callback_data=f"pay1_{num_id}"),
+                    InlineKeyboardButton(text="3个月 268U", callback_data=f"pay3_{num_id}")
+                ]
             ])
         )
 
-    # 💳 BUY
-    elif call.data.startswith("buy_"):
-        amount = int(call.data.split("_")[1])
+    # =========================
+    # 💰 PAYMENT
+    # =========================
+    elif call.data.startswith("pay"):
+
+        num_id = int(call.data.split("_")[1])
+
+        if "pay1" in call.data:
+            amount = 99
+        else:
+            amount = 268
 
         async with pool.acquire() as conn:
-            order_id = await conn.fetchval(
-                "INSERT INTO orders(user_id,amount) VALUES($1,$2) RETURNING id",
-                user_id, amount
+
+            row = await conn.fetchrow(
+                "SELECT * FROM numbers WHERE id=$1",
+                num_id
             )
+
+            if row["locked_by"] != user_id:
+                await call.answer("❌ 非本人订单")
+                return
+
+            order_id = await conn.fetchval("""
+            INSERT INTO orders(user_id,amount)
+            VALUES($1,$2)
+            RETURNING id
+            """, user_id, amount)
 
         link = await create_invoice(order_id, amount)
 
         if not link:
-            link = "❌ 支付失败，请重试"
+            link = "❌ 支付失败"
 
         await call.message.answer(
             f"💳 <b>订单 #{order_id}</b>\n\n{link}"
         )
 
-    # 💰 TOPUP
-    elif call.data == "topup":
+    # =========================
+    # 🌍 INTERNATIONAL
+    # =========================
+    elif call.data == "buy":
+
         await call.message.edit_text(
-            "💰 <b>充值金额</b>",
+            "🌍 选择国家",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="10U", callback_data="buy_10"),
-                    InlineKeyboardButton(text="50U", callback_data="buy_50")
-                ],
-                [
-                    InlineKeyboardButton(text="100U", callback_data="buy_100"),
-                    InlineKeyboardButton(text="500U", callback_data="buy_500")
-                ],
+                [InlineKeyboardButton(text="🇺🇸 USA", callback_data="usa")],
+                [InlineKeyboardButton(text="🇨🇦 Canada", callback_data="ca")],
+                [InlineKeyboardButton(text="🇬🇧 UK", callback_data="uk")],
                 [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
             ])
         )
 
-    # 👤 PROFILE
+    # =========================
+    # PROFILE
+    # =========================
     elif call.data == "profile":
+
         user = await get_user(user_id)
 
         await call.message.edit_text(
-            f"👤 <b>个人中心</b>\n\n💰 余额: {user['balance']} USDT",
+            f"👤 用户中心\n\n💰 余额: {user['balance']} USDT",
             reply_markup=menu()
         )
 
-    # 🔥 HOT
-    elif call.data == "hot":
-        await call.message.edit_text(
-            f"""
-🔥 <b>热门推荐</b>
-
-👑 靓号: +888****  
-💰 价格: 3000U  
-
-🔥 {random.randint(20,80)} 人正在查看
-⚠️ 即将售完
-""",
-            reply_markup=menu()
-        )
-
-    # 🎁 GIFT
-    elif call.data == "gift":
-        await call.message.edit_text(
-            """
-🎁 <b>礼物商城</b>
-
-💝 10U - 2000U  
-⚡ 秒到账
-""",
-            reply_markup=menu()
-        )
-
-    # 🔙 BACK
+    # =========================
+    # BACK
+    # =========================
     elif call.data == "back":
+
         user = await get_user(user_id)
 
         await call.message.edit_text(
-            f"💎 VIP SYSTEM\n💰 {user['balance']} USDT",
+            f"💎 VIP 系统\n💰 {user['balance']} USDT",
+            reply_markup=menu()
+        )
+
+
+# =========================
+# FALLBACK
+# =========================
+@dp.message()
+async def fallback(msg: types.Message):
+    await msg.answer("⚡ 系统运行正常")from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.client.default import DefaultBotProperties
+
+from config import BOT_TOKEN
+from db import get_user, get_pool
+from payment import create_invoice
+
+import random
+from datetime import datetime, timedelta
+
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode="HTML")
+)
+
+dp = Dispatcher()
+
+# =========================
+# MENU
+# =========================
+def menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+
+        [
+            InlineKeyboardButton(text="📦 租赁888号码", callback_data="rent"),
+            InlineKeyboardButton(text="🌍 国际号码", callback_data="buy")
+        ],
+
+        [
+            InlineKeyboardButton(text="💰 余额充值", callback_data="topup"),
+            InlineKeyboardButton(text="👤 个人中心", callback_data="profile")
+        ]
+    ])
+
+
+# =========================
+# START + REF
+# =========================
+@dp.message(Command("start"))
+async def start(msg: types.Message):
+
+    args = msg.text.split()
+
+    ref = None
+    if len(args) > 1:
+        try:
+            ref = int(args[1])
+        except:
+            pass
+
+    user = await get_user(msg.from_user.id)
+
+    if ref and ref != msg.from_user.id:
+        async with get_pool().acquire() as conn:
+            await conn.execute(
+                "UPDATE users SET ref_by=$1 WHERE id=$2",
+                ref, msg.from_user.id
+            )
+
+    text = (
+        "💎 <b>VIP 系统</b>\n\n"
+        f"👤 用户ID: {msg.from_user.id}\n"
+        f"💰 余额: {user['balance']} USDT\n\n"
+        "━━━━━━━━━━━━━━\n"
+        f"🔥 在线: {random.randint(50,150)}\n"
+        "━━━━━━━━━━━━━━"
+    )
+
+    await msg.answer(text, reply_markup=menu())
+
+
+# =========================
+# CALLBACK
+# =========================
+@dp.callback_query()
+async def cb(call: types.CallbackQuery):
+    await call.answer("⚡")
+
+    user_id = call.from_user.id
+    pool = get_pool()
+
+    # =========================
+    # 📦 888 LIST
+    # =========================
+    if call.data == "rent":
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM numbers LIMIT 10")
+
+        keyboard = []
+
+        for r in rows:
+
+            if r["status"] == "free":
+                status = "🟢 空闲"
+            elif r["status"] == "locked":
+                status = "🟡 已锁定"
+            else:
+                status = "🔴 已售"
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"{status} {r['number']}",
+                    callback_data=f"select_{r['id']}"
+                )
+            ])
+
+        keyboard.append([InlineKeyboardButton(text="🔙 返回", callback_data="back")])
+
+        await call.message.edit_text(
+            "📦 <b>888号码列表</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+        )
+
+    # =========================
+    # 🔒 LOCK NUMBER
+    # =========================
+    elif call.data.startswith("select_"):
+
+        num_id = int(call.data.split("_")[1])
+
+        async with pool.acquire() as conn:
+
+            count = await conn.fetchval("""
+            SELECT COUNT(*) FROM numbers
+            WHERE locked_by=$1 AND status='locked'
+            """, user_id)
+
+            if count >= 2:
+                await call.answer("⚠️ 已锁定太多号码")
+                return
+
+            row = await conn.fetchrow(
+                "SELECT * FROM numbers WHERE id=$1",
+                num_id
+            )
+
+            if row["status"] == "locked":
+                await call.answer("⚠️ 已被占用")
+                return
+
+            vip = await conn.fetchval(
+                "SELECT vip FROM users WHERE id=$1",
+                user_id
+            )
+
+            minutes = 10 if vip else 5
+
+            await conn.execute("""
+            UPDATE numbers
+            SET status='locked',
+                locked_by=$1,
+                locked_until=NOW() + ($2 || ' minutes')::interval
+            WHERE id=$3
+            """, user_id, minutes, num_id)
+
+        await call.message.answer(
+            f"""
+🔒 已锁定号码
+
+📞 {row['number']}
+
+⏳ 请在 {minutes} 分钟内支付
+
+💰 价格:
+1个月 → 99U  
+3个月 → 268U
+""",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="1个月 99U", callback_data=f"pay1_{num_id}"),
+                    InlineKeyboardButton(text="3个月 268U", callback_data=f"pay3_{num_id}")
+                ]
+            ])
+        )
+
+    # =========================
+    # 💰 PAYMENT
+    # =========================
+    elif call.data.startswith("pay"):
+
+        num_id = int(call.data.split("_")[1])
+
+        if "pay1" in call.data:
+            amount = 99
+        else:
+            amount = 268
+
+        async with pool.acquire() as conn:
+
+            row = await conn.fetchrow(
+                "SELECT * FROM numbers WHERE id=$1",
+                num_id
+            )
+
+            if row["locked_by"] != user_id:
+                await call.answer("❌ 非本人订单")
+                return
+
+            order_id = await conn.fetchval("""
+            INSERT INTO orders(user_id,amount)
+            VALUES($1,$2)
+            RETURNING id
+            """, user_id, amount)
+
+        link = await create_invoice(order_id, amount)
+
+        if not link:
+            link = "❌ 支付失败"
+
+        await call.message.answer(
+            f"💳 <b>订单 #{order_id}</b>\n\n{link}"
+        )
+
+    # =========================
+    # 🌍 INTERNATIONAL
+    # =========================
+    elif call.data == "buy":
+
+        await call.message.edit_text(
+            "🌍 选择国家",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🇺🇸 USA", callback_data="usa")],
+                [InlineKeyboardButton(text="🇨🇦 Canada", callback_data="ca")],
+                [InlineKeyboardButton(text="🇬🇧 UK", callback_data="uk")],
+                [InlineKeyboardButton(text="🔙 返回", callback_data="back")]
+            ])
+        )
+
+    # =========================
+    # PROFILE
+    # =========================
+    elif call.data == "profile":
+
+        user = await get_user(user_id)
+
+        await call.message.edit_text(
+            f"👤 用户中心\n\n💰 余额: {user['balance']} USDT",
+            reply_markup=menu()
+        )
+
+    # =========================
+    # BACK
+    # =========================
+    elif call.data == "back":
+
+        user = await get_user(user_id)
+
+        await call.message.edit_text(
+            f"💎 VIP 系统\n💰 {user['balance']} USDT",
             reply_markup=menu()
         )
 
