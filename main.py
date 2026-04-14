@@ -7,31 +7,44 @@ from db import init_db, get_pool
 app = FastAPI()
 
 
+# =========================
+# ROOT CHECK
+# =========================
 @app.get("/")
 async def root():
     return {"ok": True}
 
 
-# 🔥 TELEGRAM WEBHOOK (NO LAG)
+# =========================
+# TELEGRAM WEBHOOK
+# =========================
 @app.post("/")
 async def webhook(request: Request):
     data = await request.json()
+
+    # ⚡ xử lý trực tiếp → không lag
     await dp.feed_raw_update(bot, data)
+
     return {"ok": True}
 
 
-# 💸 PAYMENT + AUTO DELIVERY + REF
+# =========================
+# PAYMENT WEBHOOK
+# =========================
 @app.post("/payment-hook")
 async def payment(request: Request):
     data = await request.json()
 
     if data.get("payment_status") == "finished":
 
-        order_id = int(data["order_id"])
+        order_id = int(data.get("order_id", 0))
         pool = get_pool()
 
         async with pool.acquire() as conn:
 
+            # =========================
+            # UPDATE ORDER
+            # =========================
             await conn.execute(
                 "UPDATE orders SET status='paid' WHERE id=$1",
                 order_id
@@ -45,16 +58,22 @@ async def payment(request: Request):
             if not row:
                 return {"ok": True}
 
-            # 💰 cộng tiền user
+            user_id = row["user_id"]
+
+            # =========================
+            # 💰 CỘNG TIỀN USER
+            # =========================
             await conn.execute(
                 "UPDATE users SET balance=balance+$1 WHERE id=$2",
-                row["amount"], row["user_id"]
+                row["amount"], user_id
             )
 
-            # 💸 REF
+            # =========================
+            # 💸 REF SYSTEM
+            # =========================
             ref = await conn.fetchval(
                 "SELECT ref_by FROM users WHERE id=$1",
-                row["user_id"]
+                user_id
             )
 
             if ref:
@@ -64,7 +83,9 @@ async def payment(request: Request):
                     commission, ref
                 )
 
+            # =========================
             # 🎯 AUTO DELIVERY
+            # =========================
             acc = await conn.fetchrow("""
             SELECT * FROM accounts
             WHERE status='free'
@@ -77,30 +98,42 @@ async def payment(request: Request):
                     acc["id"]
                 )
 
-                await bot.send_message(
-                    row["user_id"],
-                    f"""
-🎉 购买成功
+                # 🔒 mark number sold
+                await conn.execute("""
+                UPDATE numbers
+                SET status='sold'
+                WHERE locked_by=$1
+                """, user_id)
 
-👤 用户名: {acc['username']}
-🔑 密码: {acc['password']}
+                await bot.send_message(
+                    user_id,
+                    f"""
+🎉 <b>购买成功</b>
+
+━━━━━━━━━━━━━━
+👤 用户名: <code>{acc['username']}</code>
+🔑 密码: <code>{acc['password']}</code>
+━━━━━━━━━━━━━━
 
 ⚠️ 请立即修改密码
 """
                 )
             else:
                 await bot.send_message(
-                    row["user_id"],
+                    user_id,
                     "⚠️ 暂无库存，请联系客服"
                 )
 
     return {"ok": True}
 
 
+# =========================
 # 🔓 AUTO UNLOCK
+# =========================
 async def unlock_worker():
     while True:
         pool = get_pool()
+
         async with pool.acquire() as conn:
             await conn.execute("""
             UPDATE numbers
@@ -109,11 +142,18 @@ async def unlock_worker():
             WHERE status='locked'
             AND locked_until < NOW()
             """)
+
         await asyncio.sleep(30)
 
 
+# =========================
+# STARTUP
+# =========================
 @app.on_event("startup")
 async def startup():
     await init_db()
+
+    # 🔥 chạy background
     asyncio.create_task(unlock_worker())
+
     print("✅ SYSTEM READY")
