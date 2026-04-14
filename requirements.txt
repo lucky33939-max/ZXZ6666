@@ -1,6 +1,6 @@
-fastapi
-uvicorn
+fastapi==0.111.0
+uvicorn==0.30.0
 aiogram==3.7.0
-asyncpg
-httpx
-python-dotenv
+asyncpg==0.29.0
+httpx==0.27.0
+python-dotenv==1.0.1
