@@ -10,30 +10,59 @@ async def init_db():
 
     async with db_pool.acquire() as conn:
 
+        # USERS
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id BIGINT PRIMARY KEY,
-            balance NUMERIC DEFAULT 0
+            balance NUMERIC DEFAULT 0,
+            ref_by BIGINT,
+            profit NUMERIC DEFAULT 0,
+            vip BOOLEAN DEFAULT FALSE
         );
         """)
 
+        # ORDERS
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             amount NUMERIC,
-            status TEXT DEFAULT 'pending'
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT NOW()
         );
         """)
+
+        # NUMBERS
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS numbers (
+            id SERIAL PRIMARY KEY,
+            number TEXT,
+            status TEXT DEFAULT 'free',
+            price_1m INT,
+            price_3m INT,
+            locked_by BIGINT,
+            locked_until TIMESTAMP
+        );
+        """)
+
+        # ACCOUNTS
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS accounts (
+            id SERIAL PRIMARY KEY,
+            number_id INT,
+            username TEXT,
+            password TEXT,
+            status TEXT DEFAULT 'free'
+        );
+        """)
+
 
 def get_pool():
     return db_pool
 
 
 async def get_user(user_id: int):
-    pool = get_pool()
-
-    async with pool.acquire() as conn:
+    async with db_pool.acquire() as conn:
         user = await conn.fetchrow(
             "SELECT * FROM users WHERE id=$1",
             user_id
