@@ -1,20 +1,16 @@
-import asyncio
-import logging
-from pathlib import Path
-
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from pathlib import Path
+import asyncio
 
 from bot import dp, bot
-from db import init_db, get_pool, create_tables
-
-logging.basicConfig(level=logging.INFO)
+from db import init_db, get_pool
 
 app = FastAPI()
 
 
 # =========================
-# ROOT
+# ROOT CHECK
 # =========================
 @app.get("/")
 async def root():
@@ -22,102 +18,59 @@ async def root():
 
 
 # =========================
-# TELEGRAM WEBHOOK
+# TELEGRAM WEBHOOK (ANTI LAG)
 # =========================
 @app.post("/")
 async def telegram_webhook(request: Request):
-    try:
-        data = await request.json()
+    data = await request.json()
 
-        # chạy async không block
-        asyncio.create_task(dp.feed_raw_update(bot, data))
+    # ⚡ xử lý async không block
+    asyncio.create_task(dp.feed_raw_update(bot, data))
 
-        return {"ok": True}
-
-    except Exception:
-        logging.exception("Telegram webhook error")
-        raise HTTPException(500, "Webhook failed")
+    return {"ok": True}
 
 
 # =========================
-# PAYMENT WEBHOOK (SAFE)
+# PAYMENT WEBHOOK (AUTO MONEY)
 # =========================
 @app.post("/payment-hook")
 async def payment_hook(request: Request):
-    try:
-        data = await request.json()
+    data = await request.json()
 
-        logging.info(f"Payment hook: {data}")
+    if data.get("payment_status") == "finished":
+        order_id = int(data["order_id"])
 
-        # ✅ validate status
-        if data.get("payment_status") != "finished":
-            return {"ok": True}
-
-        order_id = data.get("order_id")
-        if not order_id:
-            raise HTTPException(400, "Missing order_id")
-
-        order_id = int(order_id)
-
-        # ✅ FIX: không dùng await
         pool = get_pool()
 
         async with pool.acquire() as conn:
-            async with conn.transaction():
+            await conn.execute(
+                "UPDATE orders SET status='paid' WHERE id=$1",
+                order_id
+            )
 
-                # 🔥 LOCK chống double payment
-                row = await conn.fetchrow(
-                    "SELECT * FROM orders WHERE id=$1 FOR UPDATE",
-                    order_id
-                )
+            row = await conn.fetchrow(
+                "SELECT * FROM orders WHERE id=$1",
+                order_id
+            )
 
-                if not row:
-                    raise HTTPException(404, "Order not found")
-
-                if row["status"] == "paid":
-                    logging.warning(f"Duplicate payment: {order_id}")
-                    return {"ok": True}
-
-                # update order
-                await conn.execute(
-                    "UPDATE orders SET status='paid' WHERE id=$1",
-                    order_id
-                )
-
-                # update balance
+            # 💰 cộng tiền vào user
+            if row:
                 await conn.execute(
                     "UPDATE users SET balance = balance + $1 WHERE id=$2",
                     row["amount"], row["user_id"]
                 )
 
-                # log transaction (VERY IMPORTANT)
-                await conn.execute("""
-                    INSERT INTO transactions(user_id, amount, type, source, reference_id)
-                    VALUES($1,$2,'credit','order',$3)
-                """, row["user_id"], row["amount"], order_id)
-
-        # ✅ gửi message sau transaction
-        try:
+        if row:
             await bot.send_message(
                 row["user_id"],
-                f"💎 Thanh toán thành công\n\n"
-                f"🧾 Đơn #{order_id}\n"
-                f"💰 +{row['amount']} USDT"
+                f"💎 支付成功\n\n订单 #{order_id}\n💰 已到账 {row['amount']} USDT"
             )
-        except Exception:
-            logging.exception("Send message failed")
 
-        return {"ok": True}
-
-    except HTTPException:
-        raise
-    except Exception:
-        logging.exception("Payment hook error")
-        raise HTTPException(500, "Internal error")
+    return {"ok": True}
 
 
 # =========================
-# ADMIN PAGE
+# ADMIN PAGE (WEB UI)
 # =========================
 @app.get("/admin", response_class=HTMLResponse)
 async def admin():
@@ -130,7 +83,7 @@ async def admin():
 
 
 # =========================
-# HEALTH CHECK
+# HEALTH CHECK (ANTI SLEEP)
 # =========================
 @app.get("/ping")
 async def ping():
@@ -138,10 +91,9 @@ async def ping():
 
 
 # =========================
-# STARTUP
+# STARTUP (DB INIT)
 # =========================
 @app.on_event("startup")
 async def startup():
     await init_db()
-    await create_tables()
-    logging.info("✅ DB ready")
+    print("✅ DB READY")
