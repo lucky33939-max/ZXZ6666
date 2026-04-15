@@ -1,14 +1,14 @@
 import asyncpg
 from config import DATABASE_URL
 
-db_pool = None
-
+pool = None
 
 async def init_db():
-    global db_pool
+    global pool
+    pool = await asyncpg.create_pool(DATABASE_URL)
 
-    db_pool = await asyncpg.create_pool(DATABASE_URL)
-
+def get_pool():
+    return pool
     async with db_pool.acquire() as conn:
 
         await conn.execute("""
