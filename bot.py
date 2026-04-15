@@ -197,11 +197,12 @@ async def cb(call: types.CallbackQuery):
     # 🔙 BACK
     # =========================
     elif call.data == "back":
-        user = await get_user(msg.from_user.id)
-if not user:
-    user = {"balance": 0}
+    user = await get_user(call.from_user.id)
 
-        await call.message.edit_text(f"""
+    if not user:
+        user = {"balance": 0}
+
+    await call.message.edit_text(f"""
 💎 <b>GLOBAL VIP SYSTEM</b>
 
 💰 余额: {user['balance']} USDT
@@ -215,6 +216,4 @@ if not user:
 async def fallback(msg: types.Message):
     await msg.answer("⚡ 系统正常运行")
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+i
