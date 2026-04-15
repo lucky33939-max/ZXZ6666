@@ -29,15 +29,19 @@ async def webhook(request: Request):
 
 async def unlock_worker():
     while True:
-        pool = get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute("""
-            UPDATE numbers
-            SET status='free',
-                locked_by=NULL
-            WHERE status='locked'
-            AND locked_until < NOW()
-            """)
+        try:
+            pool = get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                UPDATE numbers
+                SET status='free',
+                    locked_by=NULL
+                WHERE status='locked'
+                AND locked_until < NOW()
+                """)
+        except Exception as e:
+            print("Worker error:", e)
+
         await asyncio.sleep(30)
 
 
