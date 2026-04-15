@@ -6,6 +6,8 @@ from aiogram.client.default import DefaultBotProperties
 from config import BOT_TOKEN, ADMIN_ID
 from db import get_user, get_pool
 
+import os
+import uvicorn
 import random
 
 bot = Bot(
@@ -210,3 +212,7 @@ async def cb(call: types.CallbackQuery):
 @dp.message()
 async def fallback(msg: types.Message):
     await msg.answer("⚡ 系统正常运行")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
