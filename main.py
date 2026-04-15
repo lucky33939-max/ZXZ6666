@@ -17,8 +17,7 @@ async def root():
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
-
-    print("UPDATE:", data)  # debug
+    print("🔥 UPDATE:", data)
 
     update = Update.model_validate(data)
 
