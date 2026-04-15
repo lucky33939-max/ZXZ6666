@@ -16,12 +16,14 @@ async def root():
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
+    print("UPDATE:", data)
 
-    # ⚡ chống lag + timeout
-    asyncio.create_task(dp.feed_raw_update(bot, data))
+    from aiogram.types import Update
+    update = Update.model_validate(data)
+
+    await dp.feed_update(bot, update)
 
     return {"ok": True}
-
 
 # 🔓 AUTO UNLOCK
 async def unlock_worker():
