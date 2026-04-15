@@ -47,7 +47,7 @@ def menu():
 @dp.message(Command("start"))
 async def start(msg: types.Message):
 
-    user = await get_user(msg.from_user.id)
+    user = await get_user(call.from_user.id)
 
     await msg.answer_photo(
         photo="https://i.imgur.com/8Km9tLL.png",
@@ -55,7 +55,7 @@ async def start(msg: types.Message):
 💎 <b>GLOBAL VIP SYSTEM</b>
 
 ━━━━━━━━━━━━━━
-👤 用户ID: <code>{msg.from_user.id}</code>  
+👤 用户ID: <code>{call.from_user.id}</code>  
 💰 余额: <b>{user['balance']} USDT</b>  
 ━━━━━━━━━━━━━━
 
