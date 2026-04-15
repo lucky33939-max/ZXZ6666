@@ -20,6 +20,9 @@ async def webhook(request: Request):
         data = await request.json()
         print("🔥 UPDATE:", data)
 
+        # 👉 delay nhỏ để DB ready
+        await asyncio.sleep(1)
+
         update = Update.model_validate(data)
         await dp.feed_update(bot=bot, update=update)
 
@@ -27,7 +30,7 @@ async def webhook(request: Request):
 
     except Exception as e:
         print("❌ ERROR:", e)
-        return {"ok": False}
+        return {"ok": True}   # ⚠️ luôn trả ok để tránh 502
 
 async def unlock_worker():
     while True:
