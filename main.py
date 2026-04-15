@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Request
 import asyncio
 
+from aiogram.types import Update
+
 from bot import dp, bot
 from db import init_db, get_pool
 
@@ -12,20 +14,19 @@ async def root():
     return {"ok": True}
 
 
-# 🔥 TELEGRAM WEBHOOK
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
-    print("UPDATE:", data)
 
-    from aiogram.types import Update
+    print("UPDATE:", data)  # debug
+
     update = Update.model_validate(data)
 
     await dp.feed_update(bot, update)
 
     return {"ok": True}
 
-# 🔓 AUTO UNLOCK
+
 async def unlock_worker():
     while True:
         pool = get_pool()
@@ -40,7 +41,6 @@ async def unlock_worker():
         await asyncio.sleep(30)
 
 
-# 🚀 STARTUP
 @app.on_event("startup")
 async def startup():
     await init_db()
