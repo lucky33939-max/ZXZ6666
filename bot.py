@@ -196,7 +196,7 @@ async def cb(call: types.CallbackQuery):
     # =========================
     # 🔙 BACK
     # =========================
-    elif call.data == "back":
+   elif call.data == "back":
     user = await get_user(call.from_user.id)
 
     if not user:
