@@ -197,7 +197,7 @@ async def cb(call: types.CallbackQuery):
     # 🔙 BACK
     # =========================
     elif call.data == "back":
-        user = await get_user(user_id)
+        user = await get_user(msg.from_user.id)
 
         await call.message.edit_text(f"""
 💎 <b>GLOBAL VIP SYSTEM</b>
