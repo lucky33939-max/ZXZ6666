@@ -16,15 +16,18 @@ async def root():
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    data = await request.json()
-    print("🔥 UPDATE:", data)
+    try:
+        data = await request.json()
+        print("🔥 UPDATE:", data)
 
-    update = Update.model_validate(data)
+        update = Update.model_validate(data)
+        await dp.feed_update(bot=bot, update=update)
 
-    await dp.feed_update(bot, update)
+        return {"ok": True}
 
-    return {"ok": True}
-
+    except Exception as e:
+        print("❌ ERROR:", e)
+        return {"ok": False}
 
 async def unlock_worker():
     while True:
