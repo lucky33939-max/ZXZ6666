@@ -216,4 +216,4 @@ async def cb(call: types.CallbackQuery):
 async def fallback(msg: types.Message):
     await msg.answer("⚡ 系统正常运行")
 
-i
+
